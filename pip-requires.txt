@@ -43,6 +43,7 @@ numpy
 analytics-python
 django-storages
 boto3
+boto
 google
 ply
 uservoice
