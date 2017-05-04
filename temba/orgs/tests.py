@@ -313,12 +313,12 @@ class OrgTest(TembaTest):
                 response.json = response.json()
             return response
 
-        url = reverse('api.v1.broadcasts')
-        response = postAPI(url, dict(contacts=[mark.uuid], text="You are adistant cousin to a wealthy person."))
+        url = reverse('api.v2.broadcasts')
+        response = postAPI(url, dict(contacts=[mark.uuid], text="You are a distant cousin to a wealthy person."))
         self.assertContains(response, "Sorry, your account is currently suspended. To enable sending messages, please contact support.", status_code=400)
 
-        url = reverse('api.v1.runs')
-        response = postAPI(url, dict(flow_uuid=flow.uuid, phone="+250788123123"))
+        url = reverse('api.v2.flow_starts')
+        response = postAPI(url, dict(flow=flow.uuid, urns=["tel:+250788123123"]))
         self.assertContains(response, "Sorry, your account is currently suspended. To enable sending messages, please contact support.", status_code=400)
 
         # still no messages or runs
@@ -2483,6 +2483,15 @@ class BulkExportTest(TembaTest):
         actionset = ActionSet.objects.filter(flow=flow).order_by('y').first()
         self.assertTrue('@contact.name' in actionset.get_actions()[0].groups)
 
+    def test_import_voice_flows_expiration_time(self):
+        # all imported voice flows should have a max expiration time of 15 min
+        self.get_flow('ivr_child_flow')
+
+        self.assertEqual(Flow.objects.filter(flow_type=Flow.VOICE).count(), 1)
+        voice_flow = Flow.objects.get(flow_type=Flow.VOICE)
+        self.assertEqual(voice_flow.name, 'Voice Flow')
+        self.assertEqual(voice_flow.expires_after_minutes, 15)
+
     def test_missing_flows_on_import(self):
         # import a flow that starts a missing flow
         self.import_file('start_missing_flow')
@@ -2552,10 +2561,8 @@ class BulkExportTest(TembaTest):
         actions = action_set.get_actions_dict()
         action_msg = actions[0]['msg']
 
-        event_msg = json.loads(event.message)
-
-        self.assertEqual(event_msg['swa'], 'hello')
-        self.assertEqual(event_msg['eng'], 'Hey')
+        self.assertEqual(event.message['swa'], 'hello')
+        self.assertEqual(event.message['eng'], 'Hey')
 
         # base language for this flow is 'swa' despite our org languages being unset
         self.assertEqual(event.flow.base_language, 'swa')

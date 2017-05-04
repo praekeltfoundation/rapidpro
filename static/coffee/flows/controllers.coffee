@@ -13,6 +13,14 @@ defaultRuleSetType = ->
   else
     'wait_message'
 
+defaultActionSetType = ->
+  if window.ivr
+    'say'
+  else if window.ussd
+    'end_ussd'
+  else
+    'reply'
+
 app.controller 'RevisionController', [ '$scope', '$rootScope', '$log', '$timeout', 'Flow', 'Revisions', ($scope, $rootScope, $log, $timeout, Flow, Revisions) ->
 
   $scope.revisions = ->
@@ -361,8 +369,10 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
 
   $scope.onConnectorDrop = (connection) ->
 
-    $(connection.sourceId).parent().removeClass('reconnecting')
+    if not $rootScope.ghost and connection.targetId == connection.suspendedElementId
+      return false
 
+    $(connection.sourceId).parent().removeClass('reconnecting')
     source = connection.sourceId.split('_')
 
     createdNewNode = false
@@ -382,7 +392,7 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
             y: ghost[0].offsetTop
             uuid: targetId
             actions: [
-              type: if window.ivr then 'say' else 'reply'
+              type: defaultActionSetType()
               msg: msg
               uuid: uuid()
             ]
@@ -418,7 +428,6 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
       $rootScope.ghost = null
 
     if not createdNewNode
-
       to = connection.targetId
 
       # When we make a bad drop, jsplumb will give us a sourceId but no source
@@ -454,7 +463,7 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
       uuid: uuid()
       actions: [
         uuid: uuid()
-        type: if window.ivr then 'say' else 'reply'
+        type: defaultActionSetType()
         msg: msg
       ]
 
@@ -470,8 +479,8 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
       y: 0
       uuid: uuid()
       label: "Response " + (Flow.flow.rule_sets.length + 1)
-      webhook_action: null,
-      ruleset_type: defaultRuleSetType(),
+      webhook_action: null
+      ruleset_type: defaultRuleSetType()
       rules: [
         test:
           test: "true"
@@ -655,7 +664,7 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
         nodeType: 'actions'
         actionset: actionset
         action:
-          type: if window.ivr then 'say' else 'reply'
+          type: defaultActionSetType()
           uuid: uuid()
       flowController: -> $scope
 
@@ -666,6 +675,10 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
 
   $scope.isMoveable = (action) ->
     return Flow.isMoveableAction(action)
+
+  $scope.hasEndUssd = (actionset) ->
+    actionset.actions?.some (action) ->
+      action.type == "end_ussd"
 
   $scope.confirmRemoveAction = (event, actionset, action) ->
 
@@ -709,7 +722,7 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
     # if its the base language, don't show the from text
     if Flow.language and Flow.flow.base_language != Flow.language.iso_code
 
-      if action.type in ["send", "reply", "say"]
+      if action.type in ["send", "reply", "say", "end_ussd"]
 
         fromText = action.msg[Flow.flow.base_language]
 
@@ -940,7 +953,7 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
 
     # our placeholder actions if they flip
     action =
-      type: if window.ivr then 'say' else 'reply'
+      type: defaultActionSetType()
       uuid: uuid()
 
     actionset =
@@ -1132,6 +1145,9 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
     if $scope.formData.rulesetConfig
       return $scope.formData.rulesetConfig.type in Flow.supportsRules
 
+  $scope.isRuleVisible = (rule) ->
+    return flow.flow_type in rule._config.filter
+
   $scope.getFlowsUrl = (flow) ->
     url = "/flow/?_format=select2"
     if Flow.flow.flow_type == 'S'
@@ -1225,11 +1241,7 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
         _base: categoryName
 
   $scope.isVisibleOperator = (operator) ->
-    if $scope.formData.rulesetConfig.type == 'wait_digits'
-      if not operator.voice
-        return false
-
-    return operator.show
+    return flow.flow_type in operator.filter
 
   $scope.isVisibleRulesetType = (rulesetConfig) ->
     valid = flow.flow_type in rulesetConfig.filter
@@ -1272,6 +1284,8 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
       categoryName = "state"
     else if op == "phone"
       categoryName = "phone"
+    else if op == "has_email"
+      categoryName = "email"
     else if op == "regex"
       categoryName = "matches"
     else if op == "date"
