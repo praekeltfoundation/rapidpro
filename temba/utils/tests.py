@@ -22,16 +22,16 @@ from mock import patch, PropertyMock
 from openpyxl import load_workbook
 from temba.contacts.models import Contact, ContactField, ContactGroup, ContactGroupCount, ExportContactsTask
 from temba.locations.models import AdminBoundary
-from temba.msgs.models import Msg, SystemLabel
+from temba.msgs.models import Msg, SystemLabelCount
 from temba.flows.models import FlowRun
 from temba.orgs.models import Org, UserSettings
 from temba.tests import TembaTest
 from temba_expressions.evaluator import EvaluationContext, DateStyle
 from . import format_decimal, slugify_with, str_to_datetime, str_to_time, date_to_utc_range, truncate, random_string
 from . import json_to_dict, dict_to_struct, datetime_to_ms, ms_to_datetime, dict_to_json, str_to_bool
-from . import percentage, datetime_to_json_date, json_date_to_datetime, non_atomic_gets, clean_string
+from . import percentage, datetime_to_json_date, json_date_to_datetime, clean_string
 from . import datetime_to_str, chunk_list, get_country_code_by_name, datetime_to_epoch, voicexml
-from .cache import get_cacheable_result, get_cacheable_attr, incrby_existing
+from .cache import get_cacheable_result, get_cacheable_attr, incrby_existing, QueueRecord
 from .currencies import currency_for_country
 from .email import send_simple_email, is_valid_address
 from .export import TableExporter
@@ -192,16 +192,6 @@ class InitTest(TembaTest):
         self.assertEquals(1000, len(rs))
         self.assertFalse('1' in rs or 'I' in rs or '0' in rs or 'O' in rs)
 
-    def test_non_atomic_gets(self):
-        @non_atomic_gets
-        def dispatch_func(*args, **kwargs):
-            return args[0] + kwargs['arg2']
-
-        self.assertTrue(hasattr(dispatch_func, '_non_atomic_gets'))
-
-        # check that function calls correctly
-        self.assertEqual(dispatch_func(1, arg2=2), 3)
-
     def test_percentage(self):
         self.assertEquals(0, percentage(0, 100))
         self.assertEquals(0, percentage(0, 0))
@@ -346,6 +336,27 @@ class CacheTest(TembaTest):
 
         incrby_existing('xxx', -2, r)  # non-existent key
         self.assertIsNone(r.get('xxx'))
+
+    def test_queue_record(self):
+        items1 = [dict(id=1), dict(id=2), dict(id=3)]
+        lock = QueueRecord('test_items', lambda i: i['id'])
+        self.assertEqual(lock.filter_unqueued(items1), [dict(id=1), dict(id=2), dict(id=3)])
+
+        lock.set_queued(items1)  # mark those items as queued now
+
+        self.assertTrue(lock.is_queued(dict(id=3)))
+        self.assertFalse(lock.is_queued(dict(id=4)))
+
+        # try getting access to queued item #3 and a new item #4
+        items2 = [dict(id=3), dict(id=4)]
+        self.assertEqual(lock.filter_unqueued(items2), [dict(id=4)])
+
+        # check locked items are still locked tomorrow
+        with patch('temba.utils.cache.timezone') as mock_timezone:
+            mock_timezone.now.return_value = timezone.now() + datetime.timedelta(days=1)
+
+            lock = QueueRecord('test_items', lambda i: i['id'])
+            self.assertEqual(lock.filter_unqueued([dict(id=3)]), [])
 
 
 class EmailTest(TembaTest):
@@ -1494,7 +1505,7 @@ class MakeTestDBTest(SimpleTestCase):
     def tearDown(self):
         Msg.objects.all().delete()
         FlowRun.objects.all().delete()
-        SystemLabel.objects.all().delete()
+        SystemLabelCount.objects.all().delete()
         Org.objects.all().delete()
         User.objects.all().delete()
         Group.objects.all().delete()

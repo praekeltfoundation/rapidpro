@@ -428,6 +428,17 @@
       .ruleset-body {
         padding: 6px;
         border-bottom: 1px solid @flat-white;
+
+        .flow-link {
+          a {
+            color: @color-font-lightgrey;
+
+            &:hover {
+              text-decoration: underline;
+            }
+          }
+        }
+
       }
 
       &.dragging:hover {
@@ -556,6 +567,21 @@
       .trigger-flow {
         .address .recipients {
           margin-left: 30px;
+          margin-right: -10px;
+        }
+      }
+
+      .trigger-flow, .flow {
+        .action-link {
+
+          a {
+            color: @color-font-lightgrey;
+
+            &:hover {
+              text-decoration: underline;
+            }
+
+          }
         }
       }
 
@@ -734,7 +760,7 @@
 }
 
 
-  .reply, .send {
+  .reply, .send, .end_ussd {
     .title {
       text-shadow: 0px 1px @color-response - #222;
       .bg-gradient(@color-response, @color-response - #101010);
@@ -1001,8 +1027,8 @@
     }
   }
 
-  .sms-directive {
-    textarea.sms {
+  .msg-directive {
+    textarea.msg {
       height: 100px;
       padding: 10px;
       width: 498px;
@@ -1014,7 +1040,7 @@
     }
 
     .warning {
-      color: @flat-darkgrey;
+      color: @flat-mutedred;
     }
   }
 
@@ -1428,6 +1454,32 @@
     display:inline-block;
     margin-top:-1px;
     width:auto;
+  }
+
+  .modal-footer {
+    .send-all {
+
+      margin-top: 4px;
+
+      &.disabled {
+        color: @color-disabled;
+      }
+
+      label {
+        padding-top:6px;
+        margin-bottom: 0;
+
+        input {
+          margin-top: -2px;
+          margin-right: 4px;
+        }
+
+        span {
+          height: 100px;
+          padding-top: 3px;
+        }
+      }
+    }
   }
 }
 

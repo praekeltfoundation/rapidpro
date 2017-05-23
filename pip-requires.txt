@@ -23,7 +23,6 @@ xlutils
 phonenumbers
 django-countries
 djangorestframework
-djangorestframework-xml
 iptools
 requests
 mock
@@ -63,3 +62,4 @@ django-excel
 pyexcel-xls
 pyexcel-xlsx
 responses
+pyfcm

@@ -1,20 +1,20 @@
 from __future__ import print_function, unicode_literals
 
+import logging
 import time
 
 from celery.task import task
 from django.utils import timezone
-from django_redis import get_redis_connection
-from datetime import timedelta
-from temba.flows.models import FlowStatsCache
 from temba.msgs.models import Broadcast, Msg, TIMEOUT_EVENT, HANDLER_QUEUE, HANDLE_EVENT_TASK
 from temba.orgs.models import Org
 from temba.utils import datetime_to_epoch
-from temba.utils.queues import start_task, complete_task
-from temba.utils.queues import push_task, nonoverlapping_task
-from .models import ExportFlowResultsTask, Flow, FlowStart, FlowRun, FlowStep, FlowRunCount, FlowPathCount, FlowPathRecentStep
+from temba.utils.cache import QueueRecord
+from temba.utils.queues import start_task, complete_task, push_task, nonoverlapping_task
+from .models import ExportFlowResultsTask, Flow, FlowStart, FlowRun, FlowStep
+from .models import FlowRunCount, FlowNodeCount, FlowPathCount, FlowPathRecentStep
 
 FLOW_TIMEOUT_KEY = 'flow_timeouts_%y_%m_%d'
+logger = logging.getLogger(__name__)
 
 
 @task(track_started=True, name='send_email_action_task')
@@ -50,37 +50,34 @@ def check_flow_timeouts_task():
     """
     See if any flow runs have timed out
     """
-    r = get_redis_connection()
-
     # find any runs that should have timed out
     runs = FlowRun.objects.filter(is_active=True, timeout_on__lte=timezone.now())
     runs = runs.only('id', 'org', 'timeout_on')
+
+    queued_timeouts = QueueRecord('flow_timeouts', lambda r: '%d:%d' % (r.id, datetime_to_epoch(r.timeout_on)))
+
     for run in runs:
-        run_key = '%d:%d' % (run.id, datetime_to_epoch(run.timeout_on))
+        # ignore any run which was locked by previous calls to this task
+        if not queued_timeouts.is_queued(run):
+            try:
+                task_payload = dict(type=TIMEOUT_EVENT, run=run.id, timeout_on=run.timeout_on)
+                push_task(run.org_id, HANDLER_QUEUE, HANDLE_EVENT_TASK, task_payload)
 
-        # check whether we have already queued this timeout
-        pipe = r.pipeline()
-        pipe.sismember(timezone.now().strftime(FLOW_TIMEOUT_KEY), run_key)
-        pipe.sismember((timezone.now() - timedelta(days=1)).strftime(FLOW_TIMEOUT_KEY), run_key)
-        (queued_today, queued_yesterday) = pipe.execute()
-
-        # if not, add a task to handle the timeout
-        if not queued_today and not queued_yesterday:
-            push_task(run.org_id, HANDLER_QUEUE, HANDLE_EVENT_TASK,
-                      dict(type=TIMEOUT_EVENT, run=run.id, timeout_on=run.timeout_on))
-
-            # tag this run as being worked on so we don't double queue
-            pipe = r.pipeline()
-            sent_key = timezone.now().strftime(FLOW_TIMEOUT_KEY)
-            pipe.sadd(sent_key, run_key)
-            pipe.expire(sent_key, 86400)
-            pipe.execute()
+                queued_timeouts.set_queued([run])
+            except Exception:  # pragma: no cover
+                logger.error("Error queuing timeout task for run #%d" % run.id, exc_info=True)
 
 
 @task(track_started=True, name='continue_parent_flows')  # pragma: no cover
 def continue_parent_flows(run_ids):
     runs = FlowRun.objects.filter(pk__in=run_ids)
     FlowRun.continue_parent_flow_runs(runs)
+
+
+@task(track_started=True, name='interrupt_flow_runs_task')
+def interrupt_flow_runs_task(flow_id):
+    runs = FlowRun.objects.filter(is_active=True, exit_type=None, flow_id=flow_id)
+    FlowRun.bulk_exit(runs, FlowRun.EXIT_TYPE_INTERRUPTED)
 
 
 @task(track_started=True, name='export_flow_results_task')
@@ -134,38 +131,6 @@ def start_msg_flow_batch_task():
           % (len(contacts), flow.id, flow.org_id, time.time() - start))
 
 
-@task(track_started=True, name="check_flow_stats_accuracy_task")
-def check_flow_stats_accuracy_task(flow_id):
-    logger = check_flow_stats_accuracy_task.get_logger()
-
-    flow = Flow.objects.get(pk=flow_id)
-
-    r = get_redis_connection()
-    runs_started_cached = r.get(flow.get_stats_cache_key(FlowStatsCache.runs_started_count))
-    runs_started_cached = 0 if runs_started_cached is None else int(runs_started_cached)
-    runs_started = flow.runs.filter(contact__is_test=False).count()
-
-    if runs_started != runs_started_cached:
-        # log error that we had to rebuild, shouldn't be happening
-        logger.error('Rebuilt flow stats (Org: %d, Flow: %d). Cache was %d but should be %d.'
-                     % (flow.org.pk, flow.pk, runs_started_cached, runs_started))
-
-        calculate_flow_stats_task.delay(flow.pk)
-
-
-@task(track_started=True, name="calculate_flow_stats")
-def calculate_flow_stats_task(flow_id):
-    r = get_redis_connection()
-
-    flow = Flow.objects.get(pk=flow_id)
-    runs_started_cached = r.get(flow.get_stats_cache_key(FlowStatsCache.runs_started_count))
-    runs_started_cached = 0 if runs_started_cached is None else int(runs_started_cached)
-    runs_started = flow.runs.filter(contact__is_test=False).count()
-
-    if runs_started != runs_started_cached:
-        Flow.objects.get(pk=flow_id).do_calculate_flow_stats()
-
-
 @nonoverlapping_task(track_started=True, name="squash_flowpathcounts", lock_key='squash_flowpathcounts')
 def squash_flowpathcounts():
     FlowPathCount.squash()
@@ -178,6 +143,7 @@ def prune_flowpathrecentsteps():
 
 @nonoverlapping_task(track_started=True, name="squash_flowruncounts", lock_key='squash_flowruncounts')
 def squash_flowruncounts():
+    FlowNodeCount.squash()
     FlowRunCount.squash()
 
 
