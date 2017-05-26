@@ -1,11 +1,12 @@
 from __future__ import absolute_import, unicode_literals
 
+from datetime import timedelta
 from django.db import models
 from django.conf import settings
 from django.core.urlresolvers import reverse
 from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
-from temba.channels.models import ChannelSession, Channel
+from temba.channels.models import ChannelSession, Channel, ChannelLog
 from temba.utils import on_transaction_commit
 
 
@@ -114,6 +115,9 @@ class IVRCall(ChannelSession):
 
         """
         from temba.flows.models import FlowRun, ActionLog
+
+        previous_status = self.status
+
         if channel_type in Channel.TWIML_CHANNELS:
             if status == 'queued':
                 self.status = self.QUEUED
@@ -159,6 +163,12 @@ class IVRCall(ChannelSession):
         if duration is not None:
             self.duration = duration
 
+        # if we are moving into IN_PROGRESS, make sure our runs have proper expirations
+        if previous_status in [self.QUEUED, self.PENDING] and self.status in [self.IN_PROGRESS, self.RINGING]:
+            runs = FlowRun.objects.filter(session=self, is_active=True, expires_on=None)
+            for run in runs:
+                run.update_expiration()
+
     def get_duration(self):
         """
         Either gets the set duration as reported by provider, or tries to calculate
@@ -171,4 +181,13 @@ class IVRCall(ChannelSession):
         if not duration:
             duration = 0
 
-        return duration
+        return timedelta(seconds=duration)
+
+    def get_last_log(self):
+        """
+        Gets the last channel log for this message. Performs sorting in Python to ease pre-fetching.
+        """
+        sorted_logs = None
+        if self.channel and self.channel.is_active:
+            sorted_logs = sorted(ChannelLog.objects.filter(session=self), key=lambda l: l.created_on, reverse=True)
+        return sorted_logs[0] if sorted_logs else None

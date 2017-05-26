@@ -4,15 +4,17 @@ import regex
 import six
 
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 from smartmin.models import SmartModel
 from temba.channels.models import Channel, ChannelEvent
 from temba.contacts.models import Contact, ContactGroup
-from temba.flows.models import Flow, FlowRun
+from temba.flows.models import Flow, FlowRun, FlowStart
 from temba.ivr.models import IVRCall
 from temba.msgs.models import Msg
 from temba.orgs.models import Org
+from temba_expressions.utils import tokenize
 
 
 @six.python_2_unicode_compatible
@@ -41,10 +43,16 @@ class Trigger(SmartModel):
                      (TYPE_USSD_PULL, _("USSD Pull Session Trigger")),
                      (TYPE_REFERRAL, _("Referral Trigger")))
 
+    MATCH_FIRST_WORD = 'F'
+    MATCH_ONLY_WORD = 'O'
+
+    MATCH_TYPES = ((MATCH_FIRST_WORD, _("Message starts with the keyword")),
+                   (MATCH_ONLY_WORD, _("Message contains only the keyword")))
+
     org = models.ForeignKey(Org, verbose_name=_("Org"), help_text=_("The organization this trigger belongs to"))
 
     keyword = models.CharField(verbose_name=_("Keyword"), max_length=16, null=True, blank=True,
-                               help_text=_("The first word in the message text"))
+                               help_text=_("Word to match in the message text"))
 
     referrer_id = models.CharField(verbose_name=_("Referrer Id"), max_length=255, null=True, blank=True,
                                    help_text=_("The referrer id that triggers us"))
@@ -74,6 +82,9 @@ class Trigger(SmartModel):
     trigger_type = models.CharField(max_length=1, choices=TRIGGER_TYPES, default=TYPE_KEYWORD,
                                     verbose_name=_("Trigger Type"), help_text=_('The type of this trigger'))
 
+    match_type = models.CharField(max_length=1, choices=MATCH_TYPES, default=MATCH_FIRST_WORD, null=True,
+                                  verbose_name=_("Trigger When"), help_text=_('How to match a message with a keyword'))
+
     channel = models.ForeignKey(Channel, verbose_name=_("Channel"), null=True, related_name='triggers',
                                 help_text=_("The associated channel"))
 
@@ -81,9 +92,6 @@ class Trigger(SmartModel):
         if self.trigger_type == Trigger.TYPE_KEYWORD:
             return self.keyword
         return self.get_trigger_type_display()  # pragma: needs cover
-
-    def name(self):  # pragma: needs cover
-        return six.text_type(self)
 
     def as_json(self):
         """
@@ -103,7 +111,6 @@ class Trigger(SmartModel):
         return ['%s_%s_%s_%s' % (self.trigger_type, str(self.channel_id), group, str(self.keyword)) for group in groups]
 
     def restore(self, user):
-        self.modified_on = timezone.now()
         self.modified_by = user
         self.is_archived = False
         self.save()
@@ -140,6 +147,17 @@ class Trigger(SmartModel):
 
             # archive any conflicting triggers
             matches.exclude(id=self.id).update(is_archived=True, modified_on=now, modified_by=user)
+
+    @classmethod
+    def archive_triggers_for_contact(cls, contact):
+        contact_triggers = list(contact.trigger_set.all())
+
+        for trigger in contact_triggers:
+            trigger.contacts.remove(contact)
+
+            if not trigger.groups.exists() and not trigger.contacts.exists():
+                trigger.is_archived = True
+                trigger.save()
 
     @classmethod
     def import_triggers(cls, exported_json, org, user, same_site=False):
@@ -246,26 +264,20 @@ class Trigger(SmartModel):
 
         # only fire the first matching trigger
         if triggers:
+            contact.ensure_unstopped()
             triggers[0].flow.start([], [contact], start_msg=start_msg, restart_participants=True, extra=extra)
 
         return bool(triggers)
 
     @classmethod
     def find_and_handle(cls, msg):
-        # get the first word out of our message
-        words = regex.split(r"[\W]+", msg.text.strip(), flags=regex.UNICODE | regex.V0)
+        words = tokenize(msg.text)
 
-        while words and not words[0]:
-            words = words[1:]
-
+        # skip if message doesn't have any words
         if not words:
             return False
 
-        keyword = words[0].lower()
-
-        if not keyword:  # pragma: needs cover
-            return False
-
+        # skip if message contact is currently active in a flow
         active_run_qs = FlowRun.objects.filter(is_active=True, contact=msg.contact,
                                                flow__is_active=True, flow__is_archived=False)
         active_run = active_run_qs.prefetch_related('steps').order_by("-created_on", "-pk").first()
@@ -273,27 +285,31 @@ class Trigger(SmartModel):
         if active_run and active_run.flow.ignore_triggers and not active_run.is_completed():
             return False
 
-        groups_ids = msg.contact.user_groups.values_list('pk', flat=True)
+        # find a matching keyword trigger with an active flow
+        trigger = Trigger.objects.filter(org=msg.org, is_archived=False, is_active=True, trigger_type=cls.TYPE_KEYWORD,
+                                         flow__is_archived=False, flow__is_active=True)
 
-        # Check first if we have a trigger for the contact groups
-        matching = Trigger.objects.filter(is_archived=False, is_active=True, org=msg.org, keyword__iexact=keyword,
-                                          flow__is_archived=False, flow__is_active=True, groups__in=groups_ids).order_by('groups__name').prefetch_related('groups', 'groups__contacts')
+        # if message text is only one word, then we can match 'only-word' triggers too
+        match_types = (cls.MATCH_FIRST_WORD, cls.MATCH_ONLY_WORD) if len(words) == 1 else (cls.MATCH_FIRST_WORD,)
+        trigger = trigger.filter(keyword__iexact=words[0], match_type__in=match_types)
 
-        # If no trigger for contact groups find there is a no group trigger
-        if not matching:
-            matching = Trigger.objects.filter(is_archived=False, is_active=True, org=msg.org, keyword__iexact=keyword,
-                                              flow__is_archived=False, flow__is_active=True, groups=None).prefetch_related('groups', 'groups__contacts')
+        # trigger needs to match the contact's groups or be non-group specific
+        trigger = trigger.filter(Q(groups__in=msg.contact.user_groups.all()) | Q(groups=None))
 
-        if not matching:
+        trigger = trigger.prefetch_related('groups', 'groups__contacts').order_by('groups__name').first()
+
+        # if no trigger for contact groups find there is a no group trigger
+        if not trigger:
             return False
 
         contact = msg.contact
-        trigger = matching[0]
 
         if not contact.is_test:
             trigger.last_triggered = msg.created_on
             trigger.trigger_count += 1
             trigger.save()
+
+        contact.ensure_unstopped()
 
         # if we have an associated flow, start this contact in it
         trigger.flow.start([], [contact], start_msg=msg, restart_participants=True)
@@ -357,7 +373,8 @@ class Trigger(SmartModel):
 
         # for any new convo triggers, clear out the call to action payload
         for trigger in triggers.filter(trigger_type=Trigger.TYPE_NEW_CONVERSATION):
-            trigger.channel.set_fb_call_to_action_payload(None)
+            if trigger.channel and trigger.channel.channel_type == Channel.TYPE_FACEBOOK:
+                trigger.channel.set_fb_call_to_action_payload(None)
 
         return [each_trigger.pk for each_trigger in triggers]
 
@@ -395,11 +412,19 @@ class Trigger(SmartModel):
         groups = list(self.groups.all())
         contacts = list(self.contacts.all())
 
-        if groups or contacts:
-            self.last_triggered = timezone.now()
-            self.trigger_count += 1
-            self.save()
+        # nothing to do, move along
+        if not groups and not contacts:
+            return
 
-            return self.flow.start(groups, contacts, restart_participants=True)
+        # for single contacts, we just start directly
+        if not groups and contacts:
+            self.flow.start(groups, contacts, restart_participants=True)
 
-        return False  # pragma: needs cover
+        # we have groups of contacts to start, create a flow start
+        else:
+            start = FlowStart.create(self.flow, self.created_by, groups=groups, contacts=contacts)
+            start.async_start()
+
+        self.last_triggered = timezone.now()
+        self.trigger_count += 1
+        self.save()

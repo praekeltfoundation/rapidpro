@@ -1,3 +1,334 @@
+v3.0.135
+----------
+ * Make 'only' keyword triggers ignore punctuation
+ * Make check_campaigns_task lock on the event fires that it will queue
+ * Break up flow event fires into sub-batches of 500
+ * Ignore and ack incoming messages from Android relayer that have no number
+
+v3.0.134
+----------
+ * Add match_type option to triggers so users can create triggers which only match when message only contains keyword
+ * Allow Africa's talking to retry sending message
+ * Allow search on the triggers pages
+ * Clear results for analytics when user removes a flow run
+
+v3.0.133
+----------
+ * Make Msg.get_sync_commands more efficent
+ * Fix open range airtime transfers
+ * Fix multiple Android channels sync
+ * Fix parsing of macrokiosk channel time format
+ * Ensure that our select2 boxes show "Add new" option even if there is a partial match with an existing item
+ * Switch to new translatable fields and remove old Broadcast fields
+ * Add Firebase Cloud messaging support for Android channels
+
+v3.0.132
+----------
+ * Migration to populate new translatable fields on old broadcasts. This migration is slow on a large database so it's
+   recommended that large deployments fake it and run it manually.
+
+v3.0.128
+----------
+ * Add new translatable fields to Broadcast and ensure they're populated for new stuff
+
+v3.0.127
+----------
+ * Fix autocomplete for items containing digits or other items
+ * Make autocomplete dropdown disappear when user clicks in input box
+ * Replace usages of "SMS" with "message" in editor
+ * Allow same subflow to be called without pause in between
+
+v3.0.126
+----------
+ * Fix exporting messages by a label folder
+ * Improve performance of org export page for large orgs
+ * Make it easier to enable/disable debug toolbar
+ * Increase channel logging for requests and responses
+ * Change contact api v1 to insert nonexistent fields
+ * Graceful termination of USSD sessions
+
+v3.0.125
+----------
+ * Don't show deleted flows on list page
+ * Convert timestamps sent by MacroKiosk from local Kuala Lumpur time
+
+v3.0.124
+----------
+ * Move initial IVR expiration check to status update on the call
+ * Hide request time in channel log if unset
+ * Check the existance of broadcast recipients before adding
+ * Voice flows import should never allow expirations longer than 15 mins
+ * Fix parse location to correctly use the tokenizized text if the location was matched for the entire text
+ * Use updates instead of full Channel saves() on realyer syncs, only update when there are changes
+
+v3.0.123
+----------
+ * Use flow starts for triggers that operate on groups
+ * Handle throttling errors from Nexmo when using API to add new numbers
+ * Convert campaign event messages to HSTORE fields
+
+v3.0.121
+----------
+ * Add MACROKIOSK channel type
+ * Show media for MMS in simulator
+
+v3.0.120
+----------
+ * Fix send all bug where we append list of messages to another list of messages
+ * Flows endpooint should allow filtering by modified_on
+
+v3.0.119
+----------
+ * More vertical form styling tweaks
+
+v3.0.118
+----------
+ * Add flow link on subflow rulesets in flows
+
+v3.0.117
+----------
+ * Fix styling on campaign event modal
+
+v3.0.116
+----------
+ * Update to latest Raven
+ * Make default form vertical, remove horizontal to vertical css overrides
+ * Add flow run search and deletion
+ * Hangup calls on channels release
+
+v3.0.115
+----------
+ * Allow message exports by label, system label or all messages
+ * Fix for double stacked subflows with immediate exits
+
+v3.0.112
+----------
+ * Archiving a flow should interrupt all the current runs
+
+v3.0.111
+----------
+ * Display webhook results on contact history
+ * Clean up template tags used on contact history
+ * Allow broadcasts to be sent to all urns belonging to the specified contacts
+
+v3.0.109
+----------
+ * Data migration to populate broadcast send_all field
+
+v3.0.108
+----------
+ * Add webhook events trim task with configurable retain times for success and error logs
+
+v3.0.107
+----------
+ * Add send_all broadcast field
+
+v3.0.106
+----------
+ * Remove non_atomic_gets and display message at /api/v1/ to explain API v1 has been replaced
+ * Add squashable model for label counts
+ * Split system label functionality into SystemLabel and SystemLabelCount
+
+v3.0.105
+----------
+ * Link subflow starts in actions
+ * Allow wait to wait in flows with warning
+
+v3.0.104
+----------
+ * Add new has email test, contains phrase test and contains only phrase test
+
+v3.0.103
+----------
+ * Migration to populate FlowNodeCount shouldn't include test contacts
+
+v3.0.102
+----------
+ * Add migration to populate FlowNodeCount
+
+v3.0.101
+----------
+ * Migration to clear no-longer-used flow stats redis keys
+ * Replace remaining cache-based flow stats code with trigger based FlowNodeCount
+
+v3.0.100
+----------
+ * Fix intermittently failing Twilio test
+ * make sure calls have expiration on initiation
+ * Update to latest smartmin
+ * Add redirection for v1 endpoints
+ * Fix webhook docs
+ * Fix MsgCreateSerializer not using specified channel
+ * Test coverage
+ * Fix test coverage issues caused by removing API v1 tests
+ * Ensure surveyor users still have access to the API v2 endpoint thats they need
+ * Remove djangorestframework-xml
+ * Restrict API v1 access to surveyor users
+ * Block all API v2 writes for suspended orgs
+ * Remove all parts of API v1 not used by Surveyor
+
+v3.0.99
+----------
+ * Prioritize msg handling over timeotus and event fires
+ * Remove hamlcompress command as deployments should use regular compress these days
+ * Fix not correctly refreshing dynamic groups when a URN is removed
+ * Allow searching for contacts *with any* value for a given field
+
+v3.0.98
+----------
+ * Fix sidebar nav LESS so that level2 lists don't have fixed height and separate scrolling
+ * Unstop a contact when we get an explicit user interaction such as follow
+
+v3.0.96
+----------
+ * Fix possible race condition between receiving and handling messages
+ * Do away with scheme for USSD, will always be TEL
+ * Make sure events are handled properly for USSD
+ * Do not specify to & from when using reply_to
+ * Update JunebugForm for editing Junebug Channel + config fields
+
+v3.0.95
+----------
+ * Log request time on channel log success
+
+v3.0.94
+----------
+ * Fix test, fix template tags
+
+v3.0.93
+----------
+ * Change request times to be in ms instead of seconds
+
+v3.0.92
+----------
+ * Block on handling incoming msgs so we dont process them forever away
+ * Include Viber channels in new conversation trigger form channel choices
+
+v3.0.90
+----------
+ * Don't use cache+calculations for flow segment counts - these are pre-calculated in FlowPathCount
+ * Do not include active contacts in flows unless user overrides it
+ * Clean up middleware imports and add tests
+ * Feedback to user when simulating a USSD channel without a USSD channel connected
+
+v3.0.89
+----------
+ * Expand base64 charset, fix decode validity heuristic
+
+v3.0.88
+----------
+ * Deal with Twilio arbitrarily sending messages as base64
+ * Allow configuration of max text size via settings
+
+v3.0.87
+----------
+ * Set higher priority when sending responses through Kannel
+
+v3.0.86
+----------
+ * Do not add stopped contacts to groups when importing
+ * Fix an entire flow start batch failing if one run throws an exception
+ * Limit images file size to be less than 500kB
+ * Send Facebook message attachments in a different request as the text message
+ * Include skuid for open range tranfertto accounts
+
+v3.0.85
+----------
+ * Fix exception when handling Viber msg with no text
+ * Migration to remove no longer used ContactGroup.count
+ * Fix search queries like 'foo bar' where there are more than one condition on name/URN
+ * Add indexes for Contact.name and ContactURN.path
+ * Replace current omnibox search function with faster and simpler top-25-of-each-type approach
+
+v3.0.84
+----------
+ * Fix Line, FCM icons, add Junebug icon
+
+v3.0.83
+----------
+ * Render missing field and URN values as "--" rather than "None" on Contact list page
+
+v3.0.82
+----------
+ * Add ROLE_USSD
+ * Add Junebug USSD Channel
+ * Fix Vumi USSD to use USSD Role
+
+v3.0.81
+----------
+ * Archive triggers that do not have a contact to send to
+ * Disable sending of messages for blocked and stopped contacts
+
+v3.0.80
+----------
+ * Add support for outbound media on reply messages for Twilio MMS (US, CA), Telegram, and Facebook
+ * Do not throw when viber sends us message missing the media
+ * Optimizations around Contact searching
+ * Send flow UUID with webhook flow events
+
+v3.0.78
+----------
+ * Allow configuration of max message length to split on for External channels
+
+v3.0.77
+----------
+ * Use brand key for evaluation instead of host when determining brand
+ * Add red rabbit type (hidden since MT only)
+ * Fix flow results exports for broadcast only flows
+
+v3.0.76
+----------
+ * Log Nexmo media responses without including entire body
+
+v3.0.75
+----------
+ * Dont encode to utf8 for XML and JSON since they expect unicode
+ * Optimize contact searching when used to determine single contact's membership
+ * Use flow system user when migrating flows, avoid list page reorder after migrations
+
+v3.0.74
+----------
+ * reduce number of lookup to DB
+
+v3.0.73
+----------
+ * Add test case for search URL against empty field value
+ * Fix sending vumi messages initiated from RapidPro without response to
+
+v3.0.72
+----------
+ * Improvements to external channels to allow configuration against JSON and XML endpoints
+ * Exclude test contacts from flow results
+ * Update to latest smartmin to fix empty string searching
+
+v3.0.70
+----------
+ * Allow USSD flows to start someone else in a flow
+ * Include reply to external_id for Vumi channel
+
+v3.0.69
+----------
+ * Add ID column to result exports for anon orgs
+ * Deactivate runs when releasing flows
+ * Fix urn display for call log
+ * Increased send and receive channel logging for Nexmo, Twilio, Twitter and Telegram 
+ * Allow payments through Bitcoins
+ * Include TransferTo account currency when asking phone info to TransferTo
+ * Don't create inbound messages for gather timeouts, letting calls expire
+ * Don't show channel log for inactive channels on contact history
+ * Upgrade to latest smartmin which changes created_on/modified_on fields on SmartModels to be overridable
+ * Uniform call and message logs
+
+v3.0.64
+----------
+ * Add ID column to anonymous org contact exports, also add @contact.id field in message context
+ * Fix counts for channel log elements
+ * Only have one link on channel page for sending log
+ * Attempt to determine file types for msg attachments using libmagic
+ * Deactivate runs on hangups, Keep ivr runs open on exit
+ * Add log for nexmo media download
+ * Add new perf_test command to run performance tests on database generated with make_test_db
+
 v3.0.62
 ----------
  * Fix preferred channels for non-msg channels

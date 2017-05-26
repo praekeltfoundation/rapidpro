@@ -26,10 +26,16 @@ class MageStreamAction(Enum):
     deactivate = 3
 
 
-@task(track_started=True, name='sync_channel_task')
-def sync_channel_task(gcm_id, channel_id=None):  # pragma: no cover
+@task(track_started=True, name='sync_channel_gcm_task')
+def sync_channel_gcm_task(cloud_registration_id, channel_id=None):  # pragma: no cover
     channel = Channel.objects.filter(pk=channel_id).first()
-    Channel.sync_channel(gcm_id, channel)
+    Channel.sync_channel_gcm(cloud_registration_id, channel)
+
+
+@task(track_started=True, name='sync_channel_fcm_task')
+def sync_channel_fcm_task(cloud_registration_id, channel_id=None):  # pragma: no cover
+    channel = Channel.objects.filter(pk=channel_id).first()
+    Channel.sync_channel_fcm(cloud_registration_id, channel)
 
 
 @task(track_started=True, name='send_msg_task')
@@ -56,7 +62,8 @@ def send_msg_task():
             while msg_tasks:
                 msg_task = msg_tasks.pop(0)
                 msg = dict_to_struct('MockMsg', msg_task,
-                                     datetime_fields=['modified_on', 'sent_on', 'created_on', 'queued_on', 'next_attempt'])
+                                     datetime_fields=['modified_on', 'sent_on', 'created_on', 'queued_on',
+                                                      'next_attempt'])
                 Channel.send_message(msg)
 
                 # if there are more messages to send for this contact, sleep a second before moving on
@@ -94,13 +101,19 @@ def trim_channel_log_task():  # pragma: needs cover
     Runs daily and clears any channel log items older than 48 hours.
     """
 
-    # keep success messages for only two days
-    two_days_ago = timezone.now() - timedelta(hours=48)
-    ChannelLog.objects.filter(created_on__lte=two_days_ago, is_error=False).delete()
+    # keep success messages for only SUCCESS_LOGS_TRIM_TIME hours
+    success_logs_trim_time = settings.SUCCESS_LOGS_TRIM_TIME
 
-    # keep errors for 30 days
-    month_ago = timezone.now() - timedelta(days=30)
-    ChannelLog.objects.filter(created_on__lte=month_ago).delete()
+    # keep all errors for ALL_LOGS_TRIM_TIME days
+    all_logs_trim_time = settings.ALL_LOGS_TRIM_TIME
+
+    if success_logs_trim_time:
+        success_log_later = timezone.now() - timedelta(hours=success_logs_trim_time)
+        ChannelLog.objects.filter(created_on__lte=success_log_later, is_error=False).delete()
+
+    if all_logs_trim_time:
+        all_log_later = timezone.now() - timedelta(hours=all_logs_trim_time)
+        ChannelLog.objects.filter(created_on__lte=all_log_later).delete()
 
 
 @task(track_started=True, name='notify_mage_task')

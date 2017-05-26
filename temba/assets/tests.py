@@ -3,7 +3,7 @@ from __future__ import absolute_import, unicode_literals
 from django.core.urlresolvers import reverse
 from temba.contacts.models import ExportContactsTask
 from temba.flows.models import ExportFlowResultsTask
-from temba.msgs.models import ExportMessagesTask
+from temba.msgs.models import SystemLabel, ExportMessagesTask
 from temba.tests import TembaTest
 
 
@@ -14,7 +14,7 @@ class AssetTest(TembaTest):
 
     def test_download(self):
         # create a message export
-        message_export_task = ExportMessagesTask.objects.create(org=self.org, created_by=self.admin, modified_by=self.admin)
+        message_export_task = ExportMessagesTask.create(self.org, self.admin, SystemLabel.TYPE_INBOX)
 
         response = self.client.get(reverse('assets.download',
                                            kwargs=dict(type='message_export', pk=message_export_task.pk)))
@@ -45,7 +45,7 @@ class AssetTest(TembaTest):
         self.assertEqual(response.status_code, 200)
 
         # create contact export and check that we can access it
-        contact_export_task = ExportContactsTask.objects.create(org=self.org, created_by=self.admin, modified_by=self.admin)
+        contact_export_task = ExportContactsTask.create(self.org, self.admin)
         contact_export_task.perform()
 
         response = self.client.get(reverse('assets.download',
@@ -81,7 +81,7 @@ class AssetTest(TembaTest):
 
     def test_stream(self):
         # create a message export
-        message_export_task = ExportMessagesTask.objects.create(org=self.org, created_by=self.admin, modified_by=self.admin)
+        message_export_task = ExportMessagesTask.create(self.org, self.admin, SystemLabel.TYPE_INBOX)
 
         # try as anon
         response = self.client.get(reverse('assets.stream',

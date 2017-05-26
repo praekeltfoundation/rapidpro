@@ -95,35 +95,35 @@ findMatches = (query, data, start, lastIdx, prependChar = undefined) ->
         html += "<p class='help-block'>" + help.text() + "</p>"
     html += "</div></div>"
 
-    controlGroup.replaceWith(html)
+    ele = $(html)
+    controlGroup.replaceWith(ele)
 
-  ele = $(".font-checkbox")
+    helpText = ele.children('.controls').children('.help-block').children('label')
+    helpText.on 'click', (event) ->
+      $(this).parent().parent('.field-input').children('.glyph.notif-checkbox').click()
+      event.preventDefault();
 
-  helpText = ele.children('.controls').children('.help-block').children('label')
-  helpText.on 'click', (event) ->
-    $(this).parent().parent('.field-input').children('.glyph.notif-checkbox').click()
-    event.preventDefault();
+    glyphCheck = ele.children('.controls').children('.glyph.notif-checkbox')
 
-  glyphCheck = ele.children('.controls').children('.glyph.notif-checkbox')
-  glyphCheck.on 'click', ->
-    cell = $(this).parent('.field-input')
-    ipt = cell.children().children("input[type='checkbox']")
+    glyphCheck.on 'click', ->
+      cell = $(this).parent('.field-input')
+      ipt = cell.children().children("input[type='checkbox']")
 
-    if ipt.prop('checked')
-      cell.removeClass 'checked'
-      ipt.prop('checked', false)
-    else
-      cell.addClass 'checked'
-      ipt.prop('checked', true)
+      if ipt.prop('checked')
+        cell.removeClass 'checked'
+        ipt.prop('checked', false)
+      else
+        cell.addClass 'checked'
+        ipt.prop('checked', true)
 
-  chkBox = ele.find("input[type=checkbox]")
-  chkBox.on 'change', ->
-    cell = ele.find('.field-input')
+    chkBox = ele.find("input[type=checkbox]")
+    chkBox.on 'change', ->
+      cell = ele.find('.field-input')
 
-    if $(this).prop('checked')
-      cell.addClass 'checked'
-    else
-      cell.removeClass 'checked'
+      if $(this).prop('checked')
+        cell.addClass 'checked'
+      else
+        cell.removeClass 'checked'
 
 
 @select2div = (selector, width="350px", placeholder=null, add_prefix=null) ->
@@ -147,11 +147,20 @@ findMatches = (query, data, start, lastIdx, prependChar = undefined) ->
       placeholder: placeholder
       query: (query) ->
         data = { results: [] }
+        cleaned_query = query.term.toLowerCase().strip()
+        exact_match = false
+
         for d in this['data']
-          if d.text.toLowerCase().indexOf(query.term.toLowerCase().strip()) != -1
+          if d.text.toLowerCase().indexOf(cleaned_query) != -1
             data.results.push({ id:d.id, text: d.text });
-        if data.results.length == 0 and query.term.strip().length > 0
+
+            if d.text.toLowerCase() == cleaned_query
+              exact_match = true
+
+        # if term is non-empty and hasn't matched an returned item exactly, show option for creating a new item
+        if not exact_match and cleaned_query.length > 0
           data.results.push({id:'[_NEW_]' + query.term, text: add_prefix + query.term});
+
         query.callback(data)
       createSearchChoice: (term, data) -> return data
   else

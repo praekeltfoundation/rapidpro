@@ -1,5 +1,6 @@
 from __future__ import absolute_import, unicode_literals
 
+import itertools
 import json
 import logging
 import plivo
@@ -26,22 +27,22 @@ from django.utils.http import urlquote
 from django.utils.safestring import mark_safe
 from django.utils.text import slugify
 from django.utils.translation import ugettext_lazy as _
+from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import View
 from email.utils import parseaddr
 from functools import cmp_to_key
-from operator import attrgetter
 from smartmin.views import SmartCRUDL, SmartCreateView, SmartFormView, SmartReadView, SmartUpdateView, SmartListView, SmartTemplateView
 from smartmin.views import SmartModelFormView, SmartModelActionView
 from datetime import timedelta
 from temba.api.models import APIToken
+from temba.campaigns.models import Campaign
 from temba.channels.models import Channel
+from temba.flows.models import Flow
 from temba.formax import FormaxMixin
 from temba.utils import analytics, languages
-from temba.utils.middleware import disable_middleware
 from temba.utils.timezones import TimeZoneFormField
 from temba.utils.email import is_valid_address
 from twilio.rest import TwilioRestClient
-
 from .models import Org, OrgCache, OrgEvent, TopUp, Invitation, UserSettings, get_stripe_credentials
 from .models import MT_SMS_EVENTS, MO_SMS_EVENTS, MT_CALL_EVENTS, MO_CALL_EVENTS, ALARM_EVENTS
 from .models import SUSPENDED, WHITELISTED, RESTORED, NEXMO_UUID, NEXMO_SECRET, NEXMO_KEY
@@ -116,6 +117,24 @@ class OrgPermsMixin(object):
             return True
 
         return self.has_org_perm(self.permission)
+
+
+class AnonMixin(OrgPermsMixin):
+    """
+    Mixin that makes sure that anonymous orgs cannot add channels (have no permission if anon)
+    """
+    def has_permission(self, request, *args, **kwargs):
+        org = self.derive_org()
+
+        # can this user break anonymity? then we are fine
+        if self.get_user().has_perm('contacts.contact_break_anon'):
+            return True
+
+        # otherwise if this org is anon, no go
+        if not org or org.is_anon:
+            return False
+        else:
+            return super(AnonMixin, self).has_permission(request, *args, **kwargs)
 
 
 class OrgObjPermsMixin(OrgPermsMixin):
@@ -491,93 +510,88 @@ class OrgCRUDL(SmartCRUDL):
     class Export(InferOrgMixin, OrgPermsMixin, SmartTemplateView):
 
         def post(self, request, *args, **kwargs):
+            org = self.get_object()
 
-            # get all of the selected flows and campaigns
-            from temba.flows.models import Flow
-            from temba.campaigns.models import Campaign
+            # fetch the selected flows and campaigns
+            flows = Flow.objects.filter(id__in=self.request.POST.getlist('flows'), org=org, is_active=True)
+            campaigns = Campaign.objects.filter(id__in=self.request.POST.getlist('campaigns'), org=org, is_active=True)
 
-            flows = set(Flow.objects.filter(id__in=self.request.POST.getlist('flows'), org=self.get_object(), is_active=True))
-            campaigns = Campaign.objects.filter(id__in=self.request.POST.getlist('campaigns'), org=self.get_object())
+            components = set(itertools.chain(flows, campaigns))
 
-            # by default we include the triggers for the requested flows
-            dependencies = dict(flows=set(), campaigns=set(), groups=set(), triggers=set())
+            # add triggers for the selected flows
             for flow in flows:
-                dependencies = flow.get_dependencies(dependencies)
+                components.update(flow.triggers.filter(is_active=True, is_archived=False))
 
-            triggers = dependencies['triggers']
-
-            export = self.get_object().export_definitions(request.branding['link'], flows, campaigns, triggers)
+            export = org.export_definitions(request.branding['link'], components)
             response = JsonResponse(export, json_dumps_params=dict(indent=2))
-            response['Content-Disposition'] = 'attachment; filename=%s.json' % slugify(self.get_object().name)
+            response['Content-Disposition'] = 'attachment; filename=%s.json' % slugify(org.name)
             return response
 
         def get_context_data(self, **kwargs):
-            from collections import defaultdict
-
-            def connected_components(lists):
-                neighbors = defaultdict(set)
-                seen = set()
-                for each in lists:
-                    for item in each:
-                        neighbors[item].update(each)
-
-                def component(node, neighbors=neighbors, seen=seen, see=seen.add):
-                    nodes = {node}
-                    next_node = nodes.pop
-                    while nodes:
-                        node = next_node()
-                        see(node)
-                        nodes |= neighbors[node] - seen
-                        yield node
-                for node in neighbors:
-                    if node not in seen:
-                        yield sorted(component(node))
-
             context = super(OrgCRUDL.Export, self).get_context_data(**kwargs)
 
-            include_archived = self.request.GET.get('archived', 0)
+            org = self.get_object()
+            include_archived = bool(int(self.request.GET.get('archived', 0)))
 
-            # all of our user facing flows
-            flows = self.get_object().get_export_flows(include_archived=include_archived)
-
-            # now add lists of flows with their dependencies
-            all_depends = []
-            for flow in flows:
-                depends = flow.get_dependencies()
-                all_depends.append([flow] + list(depends['flows']) + list(depends['campaigns']))
-
-            # add all campaigns
-            from temba.campaigns.models import Campaign
-            campaigns = Campaign.objects.filter(org=self.get_object())
-
-            if not include_archived:
-                campaigns = campaigns.filter(is_archived=False)
-
-            for campaign in campaigns:
-                all_depends.append((campaign,))
-
-            buckets = connected_components(all_depends)
-
-            # sort our buckets, campaigns, flows, triggers
-            bucket_list = []
-            singles = []
-            for bucket in buckets:
-                if len(bucket) > 1:
-                    bucket_list.append(sorted(list(bucket), key=attrgetter('__class__', 'name')))
-                else:
-                    singles.append(bucket[0])
-
-            # put the buckets with the most items first
-            bucket_list = sorted(bucket_list, key=lambda s: len(s), reverse=True)
-
-            # sort our singles by type
-            singles = sorted(singles, key=attrgetter('__class__', 'name'))
+            buckets, singles = self.generate_export_buckets(org, include_archived)
 
             context['archived'] = include_archived
-            context['buckets'] = bucket_list
+            context['buckets'] = buckets
             context['singles'] = singles
-
             return context
+
+        def generate_export_buckets(self, org, include_archived):
+            """
+            Generates a set of buckets of related exportable flows and campaigns
+            """
+            dependencies = org.generate_dependency_graph(include_archived=include_archived)
+
+            unbucketed = set(dependencies.keys())
+            buckets = []
+
+            # helper method to add a component and its dependencies to a bucket
+            def collect_component(c, bucket):
+                if c in bucket:  # pragma: no cover
+                    return
+
+                unbucketed.remove(c)
+                bucket.add(c)
+
+                for d in dependencies[c]:
+                    if d in unbucketed:
+                        collect_component(d, bucket)
+
+            while unbucketed:
+                component = next(iter(unbucketed))
+
+                bucket = set()
+                buckets.append(bucket)
+
+                collect_component(component, bucket)
+
+            # collections with only one non-group component should be merged into a single "everything else" collection
+            non_single_buckets = []
+            singles = set()
+
+            # items within buckets are sorted by type and name
+            def sort_key(c):
+                return c.__class__, c.name.lower()
+
+            # buckets with a single item are merged into a special singles bucket
+            for b in buckets:
+                if len(b) > 1:
+                    sorted_bucket = sorted(list(b), key=sort_key)
+                    non_single_buckets.append(sorted_bucket)
+                else:
+                    singles.update(b)
+
+            # put the buckets with the most items first
+            non_single_buckets = sorted(non_single_buckets, key=lambda b: len(b), reverse=True)
+
+            # sort singles
+            singles = sorted(list(singles), key=sort_key)
+
+            return non_single_buckets, singles
 
     class TwilioConnect(ModalMixin, InferOrgMixin, OrgPermsMixin, SmartFormView):
 
@@ -977,9 +991,15 @@ class OrgCRUDL(SmartCRUDL):
 
         def derive_queryset(self, **kwargs):
             queryset = super(OrgCRUDL.Manage, self).derive_queryset(**kwargs)
-            queryset = queryset.filter(is_active=True, brand=self.request.branding['host'])
+            queryset = queryset.filter(is_active=True)
+
+            brand = self.request.branding.get('brand')
+            if brand:
+                queryset = queryset.filter(brand=brand)
+
             queryset = queryset.annotate(credits=Sum('topups__credits'))
             queryset = queryset.annotate(paid=Sum('topups__price'))
+
             return queryset
 
         def get_context_data(self, **kwargs):
@@ -1376,7 +1396,7 @@ class OrgCRUDL(SmartCRUDL):
         title = _("Select your Organization")
 
         def get_user_orgs(self):
-            host = self.request.branding.get('host', settings.DEFAULT_BRAND)
+            host = self.request.branding.get('brand')
             return self.request.user.get_user_orgs(host)
 
         def pre_process(self, request, *args, **kwargs):
@@ -1933,6 +1953,13 @@ class OrgCRUDL(SmartCRUDL):
 
             return obj
 
+        def get_context_data(self, **kwargs):
+            from temba.api.models import WebHookEvent
+
+            context = super(OrgCRUDL.Webhook, self).get_context_data(**kwargs)
+            context['failed_webhooks'] = WebHookEvent.get_recent_errored(self.request.user.get_org()).exists()
+            return context
+
     class Home(FormaxMixin, InferOrgMixin, OrgPermsMixin, SmartReadView):
         title = _("Your Account")
 
@@ -2088,6 +2115,7 @@ class OrgCRUDL(SmartCRUDL):
                 airtime_api_token = form.cleaned_data['airtime_api_token']
 
                 org.connect_transferto(account_login, airtime_api_token, user)
+                org.refresh_transferto_account_currency()
                 return super(OrgCRUDL.TransferToAccount, self).form_valid(form)
 
     class TwilioAccount(InferOrgMixin, OrgPermsMixin, SmartUpdateView):
@@ -2507,7 +2535,7 @@ class StripeHandler(View):  # pragma: no cover
     Handles WebHook events from Stripe.  We are interested as to when invoices are
     charged by Stripe so we can send the user an invoice email.
     """
-    @disable_middleware
+    @csrf_exempt
     def dispatch(self, *args, **kwargs):
         return super(StripeHandler, self).dispatch(*args, **kwargs)
 
@@ -2563,10 +2591,16 @@ class StripeHandler(View):  # pragma: no cover
                                invoice_id=charge.id,
                                invoice_date=charge_date.strftime("%b %e, %Y"),
                                amount=amount,
-                               org=org.name,
-                               cc_last4=charge.card.last4,
-                               cc_type=charge.card.type,
-                               cc_name=charge.card.name)
+                               org=org.name)
+
+                if getattr(charge, 'card', None):
+                    context['cc_last4'] = charge.card.last4
+                    context['cc_type'] = charge.card.type
+                    context['cc_name'] = charge.card.name
+
+                else:
+                    context['cc_type'] = 'bitcoin'
+                    context['cc_name'] = charge.source.bitcoin.address
 
                 admin_email = org.administrators.all().first().email
 

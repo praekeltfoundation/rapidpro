@@ -19,10 +19,13 @@ from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.core.urlresolvers import reverse
+from django.core.validators import MaxValueValidator
+from django.core.validators import MinValueValidator
 from django.db import transaction
 from django.db.models import Count, Sum
 from django.http import Http404, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import redirect
+from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 from django_countries.data import COUNTRIES
@@ -30,13 +33,12 @@ from phonenumbers.phonenumberutil import region_code_for_number
 from smartmin.views import SmartCRUDL, SmartReadView
 from smartmin.views import SmartUpdateView, SmartDeleteView, SmartTemplateView, SmartListView, SmartFormView, SmartModelActionView
 from temba.contacts.models import ContactURN, URN, TEL_SCHEME, TWITTER_SCHEME, TELEGRAM_SCHEME, FACEBOOK_SCHEME, VIBER_SCHEME
-from temba.msgs.models import Broadcast, Msg, SystemLabel, QUEUED, PENDING, WIRED, OUTGOING
+from temba.msgs.models import Msg, SystemLabel, QUEUED, PENDING, WIRED, OUTGOING
 from temba.msgs.views import InboxView
 from temba.orgs.models import Org, ACCOUNT_SID, ACCOUNT_TOKEN
-from temba.orgs.views import OrgPermsMixin, OrgObjPermsMixin, ModalMixin
+from temba.orgs.views import OrgPermsMixin, OrgObjPermsMixin, ModalMixin, AnonMixin
 from temba.channels.models import ChannelSession
-from temba.utils import analytics, non_atomic_when_eager, on_transaction_commit
-from temba.utils.middleware import disable_middleware
+from temba.utils import analytics, on_transaction_commit
 from temba.utils.timezones import timezone_to_country_code
 from twilio import TwilioRestException
 from twython import Twython
@@ -525,6 +527,7 @@ def channel_status_processor(request):
         cutoff = timezone.now() - timedelta(hours=1)
         send_channel = org.get_send_channel(scheme=TEL_SCHEME)
         call_channel = org.get_call_channel()
+        ussd_channel = org.get_ussd_channel()
 
         # twitter is a suitable sender
         if not send_channel:
@@ -544,8 +547,8 @@ def channel_status_processor(request):
 
         status['send_channel'] = send_channel
         status['call_channel'] = call_channel
-        status['has_outgoing_channel'] = send_channel or call_channel
-        status['is_ussd_channel'] = send_channel.is_ussd() if send_channel else False
+        status['has_outgoing_channel'] = send_channel or call_channel or ussd_channel
+        status['is_ussd_channel'] = True if ussd_channel else False
 
         channels = org.channels.filter(is_active=True)
         for channel in channels:
@@ -570,42 +573,18 @@ def channel_status_processor(request):
 
 
 def get_commands(channel, commands, sync_event=None):
+    """
+    Generates sync commands for all queued messages on the given channel
+    """
+    msgs = Msg.objects.filter(status__in=(PENDING, QUEUED, WIRED), channel=channel, direction=OUTGOING)
+    msgs = msgs.exclude(contact__is_test=True).exclude(topup=None)
 
-    # we want to find all queued messages
-
-    pending_msgs = []
-    retry_msgs = []
     if sync_event:
         pending_msgs = sync_event.get_pending_messages()
         retry_msgs = sync_event.get_retry_messages()
+        msgs = msgs.exclude(id__in=pending_msgs).exclude(id__in=retry_msgs)
 
-    # messages without broadcast
-    msgs = list(Msg.objects.filter(status__in=(PENDING, QUEUED, WIRED), channel=channel, direction=OUTGOING,
-                                   broadcast=None).select_related('contact_urn').order_by('text', 'pk'))
-
-    # all outgoing messages for our channel that are queued up
-    broadcasts = Broadcast.objects.filter(status__in=[QUEUED, PENDING], schedule=None,
-                                          msgs__channel=channel).distinct().order_by('created_on', 'pk')
-
-    outgoing_messages = 0
-    for broadcast in broadcasts:
-        # Send command looks like this:
-        # {
-        #    "cmd":"send",
-        #    "to":[{number:"250788382384", "id":26],
-        #    "msg":"Is water point A19 still functioning?"
-        # }
-        msgs += list(broadcast.get_messages().filter(status__in=[PENDING, QUEUED]).exclude(topup=None))
-
-        outgoing_messages += len(msgs)
-
-    msgs = Msg.objects.filter(pk__in=[m.id for m in msgs]).exclude(contact__is_test=True).exclude(topup=None)
-
-    if sync_event:
-        msgs = msgs.exclude(pk__in=pending_msgs).exclude(pk__in=retry_msgs)
-
-    if msgs:
-        commands += Msg.get_sync_commands(channel=channel, msgs=msgs)
+    commands += Msg.get_sync_commands(msgs=msgs)
 
     # TODO: add in other commands for the channel
     # We need a queueable model similar to messages for sending arbitrary commands to the client
@@ -613,7 +592,7 @@ def get_commands(channel, commands, sync_event=None):
     return commands
 
 
-@disable_middleware
+@csrf_exempt
 def sync(request, channel_id):
     start = time.time()
 
@@ -652,9 +631,10 @@ def sync(request, channel_id):
         return JsonResponse({"error_id": 1, "error": "Invalid signature: \'%(request)s\'"
                                                      % {'request': request_signature}, "cmds": []}, status=401)
 
-    # update our last seen on our channel
-    channel.last_seen = timezone.now()
-    channel.save()
+    # update our last seen on our channel if we haven't seen this channel in a bit
+    if not channel.last_seen or timezone.now() - channel.last_seen > timedelta(minutes=5):
+        channel.last_seen = timezone.now()
+        channel.save(update_fields=['last_seen'])
 
     sync_event = None
 
@@ -691,11 +671,16 @@ def sync(request, channel_id):
 
                         # it is possible to receive spam SMS messages from no number on some carriers
                         tel = cmd['phone'] if cmd['phone'] else 'empty'
+                        try:
+                            URN.normalize(URN.from_tel(tel), channel.country.code)
 
-                        if 'msg' in cmd:
-                            msg = Msg.create_incoming(channel, URN.from_tel(tel), cmd['msg'], date=date)
-                            if msg:
-                                extra = dict(msg_id=msg.id)
+                            if 'msg' in cmd:
+                                msg = Msg.create_incoming(channel, URN.from_tel(tel), cmd['msg'], date=date)
+                                if msg:
+                                    extra = dict(msg_id=msg.id)
+                        except ValueError:
+                            pass
+
                         handled = True
 
                     # phone event
@@ -719,10 +704,25 @@ def sync(request, channel_id):
                         handled = True
 
                     elif keyword == 'gcm':
-                        # update our gcm and uuid
-                        channel.gcm_id = cmd['gcm_id']
+                        gcm_id = cmd.get('gcm_id', None)
+                        uuid = cmd.get('uuid', None)
+                        if channel.gcm_id != gcm_id or channel.uuid != uuid:
+                            channel.gcm_id = gcm_id
+                            channel.uuid = uuid
+                            channel.save(update_fields=['gcm_id', 'uuid'])
+
+                        # no acking the gcm
+                        handled = False
+
+                    elif keyword == 'fcm':
+                        # update our fcm and uuid
+
+                        channel.gcm_id = None
+                        config = channel.config_json()
+                        config.update({Channel.CONFIG_FCM_ID: cmd['fcm_id']})
+                        channel.config = json.dumps(config)
                         channel.uuid = cmd.get('uuid', None)
-                        channel.save()
+                        channel.save(update_fields=['uuid', 'config', 'gcm_id'])
 
                         # no acking the gcm
                         handled = False
@@ -770,7 +770,7 @@ def sync(request, channel_id):
     return JsonResponse(result)
 
 
-@disable_middleware
+@csrf_exempt
 def register(request):
     """
     Endpoint for Android devices registering with this server
@@ -881,25 +881,9 @@ class ChannelCRUDL(SmartCRUDL):
                'claim_verboice', 'claim_clickatell', 'claim_plivo', 'search_plivo', 'claim_high_connection', 'claim_blackmyna',
                'claim_smscentral', 'claim_start', 'claim_telegram', 'claim_m3tech', 'claim_yo', 'claim_viber', 'create_viber',
                'claim_twilio_messaging_service', 'claim_zenvia', 'claim_jasmin', 'claim_mblox', 'claim_facebook', 'claim_globe',
-               'claim_twiml_api', 'claim_line', 'claim_viber_public', 'claim_dart_media', 'claim_junebug', 'facebook_whitelist')
+               'claim_twiml_api', 'claim_line', 'claim_viber_public', 'claim_dart_media', 'claim_junebug', 'facebook_whitelist',
+               'claim_red_rabbit', 'claim_macrokiosk')
     permissions = True
-
-    class AnonMixin(OrgPermsMixin):
-        """
-        Mixin that makes sure that anonymous orgs cannot add channels (have no permission if anon)
-        """
-        def has_permission(self, request, *args, **kwargs):
-            org = self.derive_org()
-
-            # can this user break anonymity? then we are fine
-            if self.get_user().has_perm('contacts.contact_break_anon'):
-                return True
-
-            # otherwise if this org is anon, no go
-            if not org or org.is_anon:
-                return False
-            else:
-                return super(ChannelCRUDL.AnonMixin, self).has_permission(request, *args, **kwargs)
 
     class Read(OrgObjPermsMixin, SmartReadView):
         slug_url_kwarg = 'uuid'
@@ -1508,7 +1492,8 @@ class ChannelCRUDL(SmartCRUDL):
             config = {Channel.CONFIG_SEND_URL: url,
                       Channel.CONFIG_VERIFY_SSL: data.get('verify_ssl', False),
                       Channel.CONFIG_USE_NATIONAL: data.get('use_national', False),
-                      Channel.CONFIG_USERNAME: data.get('username', None), Channel.CONFIG_PASSWORD: data.get('password', None),
+                      Channel.CONFIG_USERNAME: data.get('username', None),
+                      Channel.CONFIG_PASSWORD: data.get('password', None),
                       Channel.CONFIG_ENCODING: data.get('encoding', Channel.ENCODING_DEFAULT)}
             self.object = Channel.add_config_external_channel(org, self.request.user, country, number, Channel.TYPE_KANNEL,
                                                               config, role=role, parent=None)
@@ -1527,6 +1512,48 @@ class ChannelCRUDL(SmartCRUDL):
 
             return super(ChannelCRUDL.ClaimKannel, self).form_valid(form)
 
+    class ClaimMacrokiosk(OrgPermsMixin, SmartFormView):
+        class MacrokioskClaimForm(forms.Form):
+            country = forms.ChoiceField(choices=ALL_COUNTRIES, label=_("Country"),
+                                        help_text=_("The country this phone number is used in"))
+            number = forms.CharField(max_length=14, min_length=1, label=_("Number"),
+                                     help_text=_("The phone number or short code you are connecting with country code. "
+                                                 "ex: +250788123124"))
+            username = forms.CharField(label=_("Username"),
+                                       help_text=_("The username provided by Macrokiosk to use their API"))
+            password = forms.CharField(label=_("Password"),
+                                       help_text=_("The password provided by Macrokiosk to use their API"))
+            service_id = forms.CharField(label=_("Service ID"),
+                                         help_text=_("The Service ID provided by Macrokiosk to use their API"))
+
+        title = _("Connect Macrokiosk")
+        success_url = "id@channels.channel_configuration"
+        form_class = MacrokioskClaimForm
+
+        def get_submitted_country(self, data):
+            return data['country']
+
+        def form_valid(self, form):
+            org = self.request.user.get_org()
+
+            if not org:  # pragma: no cover
+                raise Exception(_("No org for this user, cannot claim"))
+
+            data = form.cleaned_data
+
+            config = {
+                Channel.CONFIG_USERNAME: data.get('username', None),
+                Channel.CONFIG_PASSWORD: data.get('password', None),
+                Channel.CONFIG_MACROKIOSK_SERVICE_ID: data.get('service_id', None)
+            }
+            self.object = Channel.add_config_external_channel(org, self.request.user,
+                                                              self.get_submitted_country(data),
+                                                              data['number'], Channel.TYPE_MACROKIOSK,
+                                                              config,
+                                                              role=Channel.ROLE_SEND + Channel.ROLE_RECEIVE)
+
+            return super(ChannelCRUDL.ClaimMacrokiosk, self).form_valid(form)
+
     class ClaimExternal(OrgPermsMixin, SmartFormView):
         class EXClaimForm(forms.Form):
             scheme = forms.ChoiceField(choices=ContactURN.SCHEME_CHOICES, label=_("URN Type"),
@@ -1544,14 +1571,20 @@ class ChannelCRUDL(SmartCRUDL):
             country = forms.ChoiceField(choices=ALL_COUNTRIES, label=_("Country"), required=False,
                                         help_text=_("The country this phone number is used in"))
 
-            url = forms.URLField(max_length=1024, label=_("Send URL"),
-                                 help_text=_("The URL we will call when sending messages, with variable substitutions"))
-
             method = forms.ChoiceField(choices=(('POST', "HTTP POST"), ('GET', "HTTP GET"), ('PUT', "HTTP PUT")),
                                        help_text=_("What HTTP method to use when calling the URL"))
 
-            body = forms.CharField(max_length=1024, label=_("Request Body"), required=False,
-                                   help_text=_("The URL encoded form body, if any, with variable substitutions (only used for PUT or POST)"))
+            content_type = forms.ChoiceField(choices=Channel.CONTENT_TYPE_CHOICES,
+                                             help_text=_("The content type used when sending the request"))
+
+            max_length = forms.IntegerField(initial=160, validators=[MaxValueValidator(640), MinValueValidator(60)],
+                                            help_text=_("The maximum length of any single message on this channel. (longer messages will be split)"))
+
+            url = forms.URLField(max_length=1024, label=_("Send URL"),
+                                 help_text=_("The URL we will call when sending messages, with variable substitutions"))
+
+            body = forms.CharField(max_length=2048, label=_("Request Body"), required=False, widget=forms.Textarea,
+                                   help_text=_("The request body if any, with variable substitutions (only used for PUT or POST)"))
 
         class EXSendClaimForm(forms.Form):
             url = forms.URLField(max_length=1024, label=_("Send URL"),
@@ -1606,7 +1639,13 @@ class ChannelCRUDL(SmartCRUDL):
                 # make sure they own it
                 channel = self.request.user.get_org().channels.filter(pk=channel).first()
 
-            config = {Channel.CONFIG_SEND_URL: data['url'], Channel.CONFIG_SEND_METHOD: data['method'], Channel.CONFIG_SEND_BODY: data['body']}
+            config = {
+                Channel.CONFIG_SEND_URL: data['url'],
+                Channel.CONFIG_SEND_METHOD: data['method'],
+                Channel.CONFIG_SEND_BODY: data['body'],
+                Channel.CONFIG_CONTENT_TYPE: data['content_type'],
+                Channel.CONFIG_MAX_LENGTH: data['max_length']
+            }
             self.object = Channel.add_config_external_channel(org, self.request.user, country, address, Channel.TYPE_EXTERNAL,
                                                               config, role, scheme, parent=channel)
 
@@ -1617,7 +1656,8 @@ class ChannelCRUDL(SmartCRUDL):
             country = forms.ChoiceField(choices=ALL_COUNTRIES, label=_("Country"),
                                         help_text=_("The country this phone number is used in"))
             number = forms.CharField(max_length=14, min_length=1, label=_("Number"),
-                                     help_text=_("The phone number or short code you are connecting with country code. ex: +250788123124"))
+                                     help_text=_(
+                                         "The phone number or short code you are connecting with country code. ex: +250788123124"))
             username = forms.CharField(label=_("Username"),
                                        help_text=_("The username provided by the provider to use their API"))
             password = forms.CharField(label=_("Password"),
@@ -1703,14 +1743,23 @@ class ChannelCRUDL(SmartCRUDL):
         form_class = JasminForm
         fields = ('country', 'number', 'url', 'username', 'password')
 
+    class ClaimRedRabbit(ClaimAuthenticatedExternal):
+        title = _("Connect Red Rabbit")
+        channel_type = Channel.TYPE_RED_RABBIT
+
     class ClaimJunebug(ClaimAuthenticatedExternal):
         class JunebugForm(forms.Form):
+            channel_type = forms.ChoiceField(choices=((Channel.TYPE_JUNEBUG, 'SMS'),
+                                                      (Channel.TYPE_JUNEBUG_USSD, 'USSD')),
+                                             widget=forms.RadioSelect,
+                                             label=_('Channel Type'),
+                                             help_text=_('The type of channel you are wanting to connect.'))
             country = forms.ChoiceField(choices=ALL_COUNTRIES, label=_("Country"),
                                         help_text=_("The country this phone number is used in"))
             number = forms.CharField(max_length=14, min_length=4, label=_("Number"),
                                      help_text=("The shortcode or phone number you are connecting."))
             url = forms.URLField(label=_("URL"),
-                                 help_text=_("The URL for the Junebug channel. ex: https://junebug.praekelt.org/jb/channels/3853bb51-d38a-4bca-b332-8a57c00f2a48"))
+                                 help_text=_("The URL for the Junebug channel. ex: https://junebug.praekelt.org/jb/channels/3853bb51-d38a-4bca-b332-8a57c00f2a48/messages.json"))
             username = forms.CharField(label=_("Username"),
                                        help_text=_("The username to be used to authenticate to Junebug"),
                                        required=False)
@@ -1719,9 +1768,26 @@ class ChannelCRUDL(SmartCRUDL):
                                        required=False)
 
         title = _("Connect Junebug")
-        channel_type = Channel.TYPE_JUNEBUG
         form_class = JunebugForm
-        fields = ('country', 'number', 'url', 'username', 'password')
+        fields = ('channel_type', 'country', 'number', 'url', 'username', 'password')
+
+        def form_valid(self, form):
+            org = self.request.user.get_org()
+            data = form.cleaned_data
+
+            if data['channel_type'] == Channel.TYPE_JUNEBUG_USSD:
+                role = Channel.ROLE_USSD
+            else:
+                role = Channel.DEFAULT_ROLE
+
+            self.object = Channel.add_authenticated_external_channel(org, self.request.user,
+                                                                     self.get_submitted_country(data),
+                                                                     data['number'], data['username'],
+                                                                     data['password'], data['channel_type'],
+                                                                     data.get('url'),
+                                                                     role=role)
+
+            return super(ChannelCRUDL.ClaimAuthenticatedExternal, self).form_valid(form)
 
     class ClaimMblox(ClaimAuthenticatedExternal):
         class MBloxForm(forms.Form):
@@ -1929,14 +1995,12 @@ class ChannelCRUDL(SmartCRUDL):
                                        help_text=_("The username provided to use their API"))
             password = forms.CharField(label=_("Password"),
                                        help_text=_("The password provided to use their API"))
-            key = forms.CharField(label=_("Key"),
-                                  help_text=_("The key provided to sign requests"))
 
         title = _("Connect Shaqodoon")
         channel_type = Channel.TYPE_SHAQODOON
         readonly = ('country',)
         form_class = ShaqodoonForm
-        fields = ('country', 'number', 'url', 'username', 'password', 'key')
+        fields = ('country', 'number', 'url', 'username', 'password')
 
         def get_country(self, obj):
             return "Somalia"
@@ -1953,8 +2017,7 @@ class ChannelCRUDL(SmartCRUDL):
             data = form.cleaned_data
             self.object = Channel.add_config_external_channel(org, self.request.user,
                                                               'SO', data['number'], Channel.TYPE_SHAQODOON,
-                                                              dict(key=data['key'],
-                                                                   send_url=data['url'],
+                                                              dict(send_url=data['url'],
                                                                    username=data['username'],
                                                                    password=data['password']))
 
@@ -1975,6 +2038,7 @@ class ChannelCRUDL(SmartCRUDL):
 
         title = _("Connect Vumi")
         channel_type = Channel.TYPE_VUMI
+        channel_role = Channel.DEFAULT_ROLE
         form_class = VumiClaimForm
         fields = ('country', 'number', 'account_key', 'conversation_key', 'api_url')
 
@@ -1995,12 +2059,14 @@ class ChannelCRUDL(SmartCRUDL):
                                                               dict(account_key=data['account_key'],
                                                                    access_token=str(uuid4()),
                                                                    conversation_key=data['conversation_key'],
-                                                                   api_url=api_url))
+                                                                   api_url=api_url),
+                                                              role=self.channel_role)
 
             return super(ChannelCRUDL.ClaimAuthenticatedExternal, self).form_valid(form)
 
     class ClaimVumiUssd(ClaimVumi):
         channel_type = Channel.TYPE_VUMI_USSD
+        channel_role = Channel.ROLE_USSD
 
     class ClaimClickatell(ClaimAuthenticatedExternal):
         class ClickatellForm(forms.Form):
@@ -2183,19 +2249,24 @@ class ChannelCRUDL(SmartCRUDL):
 
             # if this is an external channel, build an example URL
             if self.object.channel_type == Channel.TYPE_EXTERNAL:
-                send_url = self.object.config_json()[Channel.CONFIG_SEND_URL]
-                send_body = self.object.config_json().get(Channel.CONFIG_SEND_BODY, Channel.CONFIG_DEFAULT_SEND_BODY)
+                config = self.object.config_json()
+                send_url = config[Channel.CONFIG_SEND_URL]
+                send_body = config.get(Channel.CONFIG_SEND_BODY, Channel.CONFIG_DEFAULT_SEND_BODY)
+
                 example_payload = {
                     'to': '+250788123123',
-                    'to_no_plus': '+250788123123',
-                    'text': "Love is patient. Love is kind",
+                    'to_no_plus': '250788123123',
+                    'text': "Love is patient. Love is kind.",
                     'from': self.object.address,
                     'from_no_plus': self.object.address.lstrip('+'),
                     'id': '1241244',
                     'channel': str(self.object.id)
                 }
-                context['example_url'] = Channel.build_send_url(send_url, example_payload)
-                context['example_body'] = Channel.build_send_url(send_body, example_payload)
+
+                content_type = config.get(Channel.CONFIG_CONTENT_TYPE, Channel.CONTENT_TYPE_URLENCODED)
+                context['example_content_type'] = "Content-Type: " + Channel.CONTENT_TYPES[content_type]
+                context['example_url'] = Channel.replace_variables(send_url, example_payload)
+                context['example_body'] = Channel.replace_variables(send_body, example_payload, content_type)
 
             context['domain'] = settings.HOSTNAME
             context['ip_addresses'] = settings.IP_ADDRESSES
@@ -2256,14 +2327,6 @@ class ChannelCRUDL(SmartCRUDL):
             return org
 
     class ClaimTwitter(OrgPermsMixin, SmartTemplateView):
-
-        @non_atomic_when_eager
-        def dispatch(self, *args, **kwargs):
-            """
-            Decorated with @non_atomic_when_eager so that channel object is always committed to database before Mage
-            tries to access it
-            """
-            return super(ChannelCRUDL.ClaimTwitter, self).dispatch(*args, **kwargs)
 
         def pre_process(self, *args, **kwargs):
             response = super(ChannelCRUDL.ClaimTwitter, self).pre_process(*args, **kwargs)
@@ -2431,7 +2494,7 @@ class ChannelCRUDL(SmartCRUDL):
     class List(OrgPermsMixin, SmartListView):
         title = _("Channels")
         fields = ('name', 'address', 'last_seen')
-        search_fields = ('name', 'number', 'org__created_by__email')
+        search_fields = ('name', 'address', 'org__created_by__email')
 
         def get_queryset(self, **kwargs):
             queryset = super(ChannelCRUDL.List, self).get_queryset(**kwargs)
@@ -3030,11 +3093,12 @@ class ChannelLogCRUDL(SmartCRUDL):
             if self.request.GET.get('sessions'):
                 logs = ChannelLog.objects.filter(channel=channel).exclude(session=None).values_list('session_id', flat=True)
                 events = ChannelSession.objects.filter(id__in=logs).order_by('-created_on')
+
+                if self.request.GET.get('errors'):
+                    events = events.filter(status=ChannelSession.FAILED)
             else:
                 events = ChannelLog.objects.filter(channel=channel, session=None).order_by('-created_on').select_related('msg__contact', 'msg')
-                events.count = lambda: channel.get_non_ivr_count()
-
-            # monkey patch our queryset for the total count
+                events.count = lambda: channel.get_non_ivr_log_count()
 
             return events
 
@@ -3043,10 +3107,10 @@ class ChannelLogCRUDL(SmartCRUDL):
             context['channel'] = Channel.objects.get(pk=self.request.GET['channel'])
             return context
 
-    class Session(ChannelCRUDL.AnonMixin, SmartReadView):
+    class Session(AnonMixin, SmartReadView):
         model = ChannelSession
 
-    class Read(ChannelCRUDL.AnonMixin, SmartReadView):
+    class Read(AnonMixin, SmartReadView):
         fields = ('description', 'created_on')
 
         def derive_queryset(self, **kwargs):

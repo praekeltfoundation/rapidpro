@@ -1,10 +1,11 @@
+# -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 
 import json
 import six
 import uuid
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from mock import patch
 
 from django.core.urlresolvers import reverse
@@ -13,7 +14,9 @@ from django.utils import timezone
 from django_redis import get_redis_connection
 
 from temba.channels.models import Channel
-from temba.msgs.models import WIRED, MSG_SENT_KEY, SENT, Msg, INCOMING, OUTGOING
+from temba.channels.tests import JunebugTestMixin
+from temba.contacts.models import Contact, TEL_SCHEME
+from temba.msgs.models import WIRED, MSG_SENT_KEY, SENT, Msg, INCOMING, OUTGOING, USSD, DELIVERED, FAILED
 from temba.tests import TembaTest, MockResponse
 from temba.triggers.models import Trigger
 from temba.flows.models import FlowRun
@@ -23,6 +26,14 @@ from .models import USSDSession
 
 
 class USSDSessionTest(TembaTest):
+
+    def setUp(self):
+        super(USSDSessionTest, self).setUp()
+
+        self.channel.delete()
+        self.channel = Channel.create(self.org, self.user, 'RW', Channel.TYPE_JUNEBUG_USSD, None, '+250788123123',
+                                      role=Channel.ROLE_USSD + Channel.DEFAULT_ROLE,
+                                      uuid='00000000-0000-0000-0000-000000001234')
 
     def test_pull_async_trigger_start(self):
         flow = self.get_flow('ussd_example')
@@ -146,6 +157,249 @@ class USSDSessionTest(TembaTest):
         self.assertIsInstance(session.ended_on, datetime)
         self.assertEqual(session.external_id, "21345")
 
+    def test_end_with_menu_no_destination(self):
+        flow = self.get_flow('ussd_session_end')
+        contact = self.create_contact("Joe", "+250788383383")
+        flow.start([], [contact])
+
+        # choose option with no destination connected
+        session = USSDSession.handle_incoming(channel=self.channel, urn="+250788383383", content="4",
+                                              date=timezone.now(), external_id="21345")
+
+        # there should be 2 outgoing messages, one with an empty message to close down the session gracefully
+        self.assertEqual(Msg.objects.count(), 3)
+        self.assertEqual(Msg.objects.filter(direction='O').count(), 2)
+
+        msgs = Msg.objects.filter(direction='O').order_by('id')
+
+        self.assertNotEqual(msgs[0].text, '')
+        self.assertEqual(msgs[1].text, '')
+
+        # the session should be marked as "ENDING"
+        session.refresh_from_db()
+        self.assertEqual(session.status, USSDSession.ENDING)
+        self.assertIsNone(session.ended_on)
+        self.assertEqual(session.external_id, "21345")
+
+    def test_end_with_menu_destination_with_messaging(self):
+        flow = self.get_flow('ussd_session_end')
+        contact = self.create_contact("Joe", "+250788383383")
+        flow.start([], [contact])
+
+        # choose option with destination connected to another wait_menu ruleset
+        session = USSDSession.handle_incoming(channel=self.channel, urn="+250788383383", content="1",
+                                              date=timezone.now(), external_id="21345")
+
+        # the session shouldn't be marked as ending
+        self.assertEqual(session.status, USSDSession.IN_PROGRESS)
+        self.assertIsNone(session.ended_on)
+        self.assertEqual(session.external_id, "21345")
+
+    def test_end_with_menu_destination_without_messaging(self):
+        flow = self.get_flow('ussd_session_end')
+        contact = self.create_contact("Joe", "+250788383383")
+        flow.start([], [contact])
+
+        # choose option with destination connected to another wait_menu ruleset
+        session = USSDSession.handle_incoming(channel=self.channel, urn="+250788383383", content="test",
+                                              date=timezone.now(), external_id="21345")
+
+        # the session shouldn't be marked as ending
+        self.assertEqual(session.status, USSDSession.IN_PROGRESS)
+        self.assertIsNone(session.ended_on)
+        self.assertEqual(session.external_id, "21345")
+
+        # choose option with destination connected to actions (add to groups and set language later)
+        session = USSDSession.handle_incoming(channel=self.channel, urn="+250788383383", content="2",
+                                              date=timezone.now(), external_id="21345")
+
+        # there should be a last message with no content to close the session
+        msgs = Msg.objects.filter(direction='O').order_by('id')
+
+        self.assertEqual(msgs.last().text, '')
+
+        # the session should be marked as ending at this point, cos' there's no more messaging destination in the flow
+        session.refresh_from_db()
+        self.assertEqual(session.status, USSDSession.ENDING)
+        self.assertIsNone(session.ended_on)
+        self.assertEqual(session.external_id, "21345")
+
+    def test_end_with_arbitrary_rules(self):
+        flow = self.get_flow('ussd_session_end')
+        contact = self.create_contact("Joe", "+250788383383")
+        flow.start([], [contact])
+
+        # choose option with destination connected to the arbitarty ussd ruleset
+        session = USSDSession.handle_incoming(channel=self.channel, urn="+250788383383", content="3",
+                                              date=timezone.now(), external_id="21345")
+
+        # the session shouldn't be marked as ending
+        self.assertEqual(session.status, USSDSession.IN_PROGRESS)
+        self.assertIsNone(session.ended_on)
+        self.assertEqual(session.external_id, "21345")
+
+        # now we are at the ussd response, choose an option here
+        session = USSDSession.handle_incoming(channel=self.channel, urn="+250788383383", content="3",
+                                              date=timezone.now(), external_id="21345")
+
+        session.refresh_from_db()
+        self.assertEqual(session.status, USSDSession.ENDING)
+        self.assertIsNone(session.ended_on)
+        self.assertEqual(session.external_id, "21345")
+
+    def test_end_with_end_action(self):
+        flow = self.get_flow('ussd_session_end')
+        contact = self.create_contact("Joe", "+250788383383")
+        flow.start([], [contact])
+
+        # choose option with destination connected to the arbitarty ussd ruleset
+        session = USSDSession.handle_incoming(channel=self.channel, urn="+250788383383", content="3",
+                                              date=timezone.now(), external_id="21345")
+
+        # the session shouldn't be marked as ending
+        self.assertEqual(session.status, USSDSession.IN_PROGRESS)
+        self.assertIsNone(session.ended_on)
+        self.assertEqual(session.external_id, "21345")
+
+        # choose the Maybe option which leads to a USSD End with message action
+        session = USSDSession.handle_incoming(channel=self.channel, urn="+250788383383", content="Maybe",
+                                              date=timezone.now(), external_id="21345")
+
+        # there should be a last message with the message of the end action
+        msgs = Msg.objects.filter(direction='O').order_by('id')
+
+        self.assertEqual(msgs.last().text, 'perfect, thanks')
+
+        # same session is modified
+        self.assertEqual(USSDSession.objects.count(), 1)
+
+        session.refresh_from_db()
+
+        self.assertEqual(session.status, USSDSession.ENDING)
+        self.assertIsNone(session.ended_on)
+        self.assertEqual(session.external_id, "21345")
+
+    def test_end_with_end_action_with_more_actions_in_actionset(self):
+        flow = self.get_flow('ussd_session_end')
+        contact = self.create_contact("Joe", "+250788383383")
+        flow.start([], [contact])
+
+        # choose option with destination connected to a set of actions including an end session w message action
+        session = USSDSession.handle_incoming(channel=self.channel, urn="+250788383383", content="2",
+                                              date=timezone.now(), external_id="21345")
+
+        # there should be a last message with the message of the end action
+        msgs = Msg.objects.filter(direction='O').order_by('id')
+
+        self.assertEqual(msgs.last().text, 'Im sorry, we will contact you')
+
+        session.refresh_from_db()
+
+        # the session should be marked as ending
+        self.assertEqual(session.status, USSDSession.ENDING)
+        self.assertIsNone(session.ended_on)
+        self.assertEqual(session.external_id, "21345")
+
+    def test_ruleset_through_ruleset_no_destination(self):
+        flow = self.get_flow('ussd_session_end')
+        contact = self.create_contact("Joe", "+250788383383")
+        flow.start([], [contact])
+
+        # choose option with destination connected to another type of ruleset (Split by Expression)
+        session = USSDSession.handle_incoming(channel=self.channel, urn="+250788383383", content="6",
+                                              date=timezone.now(), external_id="21345")
+
+        # there should be a last message with empty msg just to close the session gracefully
+        msgs = Msg.objects.filter(direction='O').order_by('id')
+
+        self.assertEqual(msgs.last().text, '')
+
+        session.refresh_from_db()
+        # the session should be marked as ending since the next ruleset doesn't have any destination
+        self.assertEqual(session.status, USSDSession.ENDING)
+        self.assertIsNone(session.ended_on)
+        self.assertEqual(session.external_id, "21345")
+
+    def test_ruleset_through_ruleset_with_third_ruleset_destination(self):
+        flow = self.get_flow('ussd_session_end')
+        contact = self.create_contact("Joe", "+250788383383")
+        flow.start([], [contact])
+
+        # choose option with destination connected to another type of ruleset (Split by Expression)
+        session = USSDSession.handle_incoming(channel=self.channel, urn="+250788383383", content="5",
+                                              date=timezone.now(), external_id="21345")
+
+        # there should be a last message with the message of the end action
+        msgs = Msg.objects.filter(direction='O').order_by('id')
+
+        self.assertEqual(msgs.last().text, 'a')
+
+        session.refresh_from_db()
+
+        self.assertEqual(session.status, USSDSession.ENDING)
+        self.assertIsNone(session.ended_on)
+        self.assertEqual(session.external_id, "21345")
+
+    def test_ruleset_through_two_rulesets_ending_with_not_messaging_action(self):
+        flow = self.get_flow('ussd_session_end')
+        contact = self.create_contact("Joe", "+250788383383")
+        flow.start([], [contact])
+
+        # choose option with destination connected to another type of ruleset (Split by Expression)
+        session = USSDSession.handle_incoming(channel=self.channel, urn="+250788383383", content="8",
+                                              date=timezone.now(), external_id="21345")
+
+        # there should be a last message with empty message
+        msgs = Msg.objects.filter(direction='O').order_by('id')
+
+        self.assertEqual(msgs.last().text, '')
+
+        session.refresh_from_db()
+
+        self.assertEqual(session.status, USSDSession.ENDING)
+        self.assertIsNone(session.ended_on)
+        self.assertEqual(session.external_id, "21345")
+
+    def test_ruleset_through_ruleset_ending_with_end_action(self):
+        flow = self.get_flow('ussd_session_end')
+        contact = self.create_contact("Joe", "+250788383383")
+        flow.start([], [contact])
+
+        # choose option with destination connected to another type of ruleset (Split by Expression)
+        session = USSDSession.handle_incoming(channel=self.channel, urn="+250788383383", content="9",
+                                              date=timezone.now(), external_id="21345")
+
+        # there should be a last message with the message of the end action
+        msgs = Msg.objects.filter(direction='O').order_by('id')
+
+        self.assertEqual(msgs.last().text, 'c')
+
+        session.refresh_from_db()
+
+        self.assertEqual(session.status, USSDSession.ENDING)
+        self.assertIsNone(session.ended_on)
+        self.assertEqual(session.external_id, "21345")
+
+    def test_ruleset_through_rulesets_ending_with_no_action(self):
+        flow = self.get_flow('ussd_session_end')
+        contact = self.create_contact("Joe", "+250788383383")
+        flow.start([], [contact])
+
+        # choose option with destination connected to another type of ruleset (Split by Expression)
+        session = USSDSession.handle_incoming(channel=self.channel, urn="+250788383383", content="7",
+                                              date=timezone.now(), external_id="21345")
+
+        # there should be a last message with empty message
+        msgs = Msg.objects.filter(direction='O').order_by('id')
+
+        self.assertEqual(msgs.last().text, '')
+
+        session.refresh_from_db()
+
+        self.assertEqual(session.status, USSDSession.ENDING)
+        self.assertIsNone(session.ended_on)
+        self.assertEqual(session.external_id, "21345")
+
 
 class VumiUssdTest(TembaTest):
 
@@ -156,12 +410,18 @@ class VumiUssdTest(TembaTest):
         self.channel = Channel.create(self.org, self.user, 'RW', Channel.TYPE_VUMI_USSD, None, '+250788123123',
                                       config=dict(account_key='vumi-key', access_token='vumi-token',
                                                   conversation_key='key'),
-                                      uuid='00000000-0000-0000-0000-000000001234')
+                                      uuid='00000000-0000-0000-0000-000000001234',
+                                      role=Channel.ROLE_USSD)
 
     def test_send(self):
         joe = self.create_contact("Joe", "+250788383383")
         self.create_group("Reporters", [joe])
-        msg = joe.send("Test message", self.admin, trigger_send=False)
+        inbound = Msg.create_incoming(
+            self.channel, "tel:+250788383383", "Send an inbound message",
+            external_id='vumi-message-id', msg_type=USSD)
+        msg = inbound.reply("Test message", self.admin, trigger_send=False)[0]
+        self.assertEqual(inbound.msg_type, USSD)
+        self.assertEqual(msg.msg_type, USSD)
 
         # our outgoing message
         msg.refresh_from_db()
@@ -199,7 +459,10 @@ class VumiUssdTest(TembaTest):
     def test_send_default_url(self):
         joe = self.create_contact("Joe", "+250788383383")
         self.create_group("Reporters", [joe])
-        msg = joe.send("Test message", self.admin, trigger_send=False)
+        inbound = Msg.create_incoming(
+            self.channel, "tel:+250788383383", "Send an inbound message",
+            external_id='vumi-message-id', msg_type=USSD)
+        msg = inbound.reply("Test message", self.admin, trigger_send=False)[0]
 
         # our outgoing message
         msg.refresh_from_db()
@@ -224,7 +487,10 @@ class VumiUssdTest(TembaTest):
     def test_ack(self):
         joe = self.create_contact("Joe", "+250788383383")
         self.create_group("Reporters", [joe])
-        msg = joe.send("Test message", self.admin, trigger_send=False)
+        inbound = Msg.create_incoming(
+            self.channel, "tel:+250788383383", "Send an inbound message",
+            external_id='vumi-message-id', msg_type=USSD)
+        msg = inbound.reply("Test message", self.admin, trigger_send=False)[0]
 
         # our outgoing message
         msg.refresh_from_db()
@@ -273,7 +539,10 @@ class VumiUssdTest(TembaTest):
     def test_nack(self):
         joe = self.create_contact("Joe", "+250788383383")
         self.create_group("Reporters", [joe])
-        msg = joe.send("Test message", self.admin, trigger_send=False)
+        inbound = Msg.create_incoming(
+            self.channel, "tel:+250788383383", "Send an inbound message",
+            external_id='vumi-message-id', msg_type=USSD)
+        msg = inbound.reply("Test message", self.admin, trigger_send=False)[0]
 
         # our outgoing message
         msg.refresh_from_db()
@@ -443,3 +712,222 @@ class VumiUssdTest(TembaTest):
         session = USSDSession.objects.get()
         self.assertIsInstance(session.ended_on, datetime)
         self.assertEqual(session.status, USSDSession.INTERRUPTED)
+
+    def test_send_session_close(self):
+        flow = self.get_flow('ussd_session_end')
+        contact = self.create_contact("Joe", "+250788383383")
+
+        try:
+            settings.SEND_MESSAGES = True
+
+            with patch('requests.put') as mock:
+                mock.return_value = MockResponse(200, '{ "message_id": "1515" }')
+                flow.start([], [contact])
+
+                # our outgoing message
+                msg = Msg.objects.filter(direction='O').order_by('id').last()
+
+                self.assertEqual(msg.direction, 'O')
+                self.assertTrue(msg.sent_on)
+                self.assertEquals("1515", msg.external_id)
+                self.assertEquals(msg.session.status, USSDSession.INITIATED)
+
+                # reply and choose an option that doesn't have any destination thus needs to close the session
+                USSDSession.handle_incoming(channel=self.channel, urn="+250788383383", content="4",
+                                            date=timezone.now(), external_id="21345")
+
+                # our outgoing message
+                msg = Msg.objects.filter(direction='O').order_by('id').last()
+                self.assertEqual(msg.direction, 'O')
+                self.assertTrue(msg.sent_on)
+                self.assertEquals("1515", msg.external_id)
+
+                self.assertEquals(msg.session.status, USSDSession.COMPLETED)
+
+                self.assertEquals(2, mock.call_count)
+
+                self.clear_cache()
+        finally:
+            settings.SEND_MESSAGES = False
+
+    def test_ussd_trigger_flow(self):
+        # start a session
+        callback_url = reverse('handlers.vumi_handler', args=['receive', self.channel.uuid])
+        ussd_code = "*111#"
+        data = dict(timestamp="2016-04-18 03:54:20.570618", message_id="123456", from_addr="+250788383383",
+                    content="None", transport_type='ussd', session_event="new", to_addr=ussd_code)
+        response = self.client.post(callback_url, json.dumps(data), content_type="application/json")
+        flow = self.get_flow('ussd_trigger_flow')
+        self.assertEquals(0, flow.runs.all().count())
+
+        trigger, _ = Trigger.objects.get_or_create(channel=self.channel, keyword=ussd_code, flow=flow,
+                                                   created_by=self.user, modified_by=self.user, org=self.org,
+                                                   trigger_type=Trigger.TYPE_USSD_PULL)
+
+        # now we added the trigger, let's reinitiate the session
+        response = self.client.post(callback_url, json.dumps(data), content_type="application/json")
+
+        msg = Msg.objects.all().first()
+        self.assertEqual("Please enter a phone number", msg.text)
+
+        from_addr = "+250788383383"
+        data = dict(timestamp="2016-04-18 03:54:20.570618", message_id="123456", from_addr=from_addr,
+                    content="250788123123", to_addr="*113#", transport_type='ussd')
+
+        response = self.client.post(callback_url, json.dumps(data), content_type="application/json")
+
+        self.assertEqual(response.status_code, 200)
+
+        msg = Msg.objects.all().order_by('-created_on').first()
+
+        # We should get the final message
+        self.assertEqual("Thank you", msg.text)
+
+        # Check the new contact was created
+        new_contact = Contact.from_urn(self.org, "tel:+250788123123")
+        self.assertIsNotNone(new_contact)
+
+
+class JunebugUSSDTest(JunebugTestMixin, TembaTest):
+
+    def setUp(self):
+        super(JunebugUSSDTest, self).setUp()
+
+        flow = self.get_flow('ussd_example')
+        self.starcode = "*113#"
+
+        self.channel.delete()
+        self.channel = Channel.create(
+            self.org, self.user, 'RW', Channel.TYPE_JUNEBUG_USSD, None, '1234',
+            config=dict(username='junebug-user', password='junebug-pass', send_url='http://example.org/'),
+            uuid='00000000-0000-0000-0000-000000001234', role=Channel.ROLE_USSD)
+
+        self.trigger, _ = Trigger.objects.get_or_create(
+            channel=self.channel, keyword=self.starcode, flow=flow,
+            created_by=self.user, modified_by=self.user, org=self.org,
+            trigger_type=Trigger.TYPE_USSD_PULL)
+
+    def tearDown(self):
+        super(JunebugUSSDTest, self).tearDown()
+        settings.SEND_MESSAGES = False
+
+    def test_status(self):
+        joe = self.create_contact("Joe Biden", "+254788383383")
+        msg = joe.send("Hey Joe, it's Obama, pick up!", self.admin, msg_type=USSD)
+
+        data = self.mk_event()
+        msg.external_id = data['message_id']
+        msg.save(update_fields=('external_id',))
+
+        def assertStatus(sms, event_type, assert_status):
+            data['event_type'] = event_type
+            response = self.client.post(
+                reverse('handlers.junebug_handler',
+                        args=['event', self.channel.uuid]),
+                data=json.dumps(data),
+                content_type='application/json')
+            self.assertEquals(200, response.status_code)
+            sms = Msg.objects.get(pk=sms.id)
+            self.assertEquals(assert_status, sms.status)
+
+        assertStatus(msg, 'submitted', SENT)
+        assertStatus(msg, 'delivery_succeeded', DELIVERED)
+        assertStatus(msg, 'delivery_failed', FAILED)
+        assertStatus(msg, 'rejected', FAILED)
+
+    def test_receive_ussd(self):
+        from temba.ussd.models import USSDSession
+        from temba.channels.handlers import JunebugHandler
+
+        data = self.mk_ussd_msg(content="événement", to=self.starcode)
+        callback_url = reverse('handlers.junebug_handler',
+                               args=['inbound', self.channel.uuid])
+        response = self.client.post(callback_url, json.dumps(data),
+                                    content_type='application/json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['status'], JunebugHandler.ACK)
+
+        # load our message
+        inbound_msg, outbound_msg = Msg.objects.all().order_by('pk')
+        self.assertEquals(data["from"], outbound_msg.contact.get_urn(TEL_SCHEME).path)
+        self.assertEquals(outbound_msg.response_to, inbound_msg)
+        self.assertEquals(outbound_msg.session.status, USSDSession.TRIGGERED)
+        self.assertEquals(inbound_msg.direction, INCOMING)
+
+    def test_receive_ussd_no_session(self):
+        from temba.channels.handlers import JunebugHandler
+
+        # Delete the trigger to prevent the sesion from being created
+        self.trigger.delete()
+
+        data = self.mk_ussd_msg(content="événement", to=self.starcode)
+        callback_url = reverse('handlers.junebug_handler',
+                               args=['inbound', self.channel.uuid])
+        response = self.client.post(callback_url, json.dumps(data),
+                                    content_type='application/json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['status'], JunebugHandler.NACK)
+
+    def test_send_ussd_continue_and_end_session(self):
+        flow = self.get_flow('ussd_session_end')
+        contact = self.create_contact("Joe", "+250788383383")
+
+        try:
+            settings.SEND_MESSAGES = True
+
+            with patch('requests.post') as mock:
+                mock.return_value = MockResponse(200, json.dumps({
+                    'result': {
+                        'message_id': '07033084-5cfd-4812-90a4-e4d24ffb6e3d',
+                    }
+                }))
+
+                flow.start([], [contact])
+
+                # our outgoing message
+                msg = Msg.objects.filter(direction='O').order_by('id').last()
+
+                self.assertEqual(msg.direction, 'O')
+                self.assertTrue(msg.sent_on)
+                self.assertEquals("07033084-5cfd-4812-90a4-e4d24ffb6e3d", msg.external_id)
+                self.assertEquals(msg.session.status, USSDSession.INITIATED)
+
+                # reply and choose an option that doesn't have any destination thus needs to close the session
+                USSDSession.handle_incoming(channel=self.channel, urn="+250788383383", content="4",
+                                            date=timezone.now(), external_id="21345", message_id='vumi-message-id')
+                # our outgoing message
+                msg = Msg.objects.filter(direction='O').order_by('id').last()
+                self.assertEquals(WIRED, msg.status)
+                self.assertEqual(msg.direction, 'O')
+                self.assertTrue(msg.sent_on)
+                self.assertEquals("07033084-5cfd-4812-90a4-e4d24ffb6e3d", msg.external_id)
+                self.assertEquals("vumi-message-id", msg.response_to.external_id)
+
+                self.assertEquals(msg.session.status, USSDSession.COMPLETED)
+                self.assertTrue(isinstance(msg.session.get_duration(), timedelta))
+
+                self.assertEquals(2, mock.call_count)
+
+                # first outbound (session continued)
+                call = mock.call_args_list[0]
+                (args, kwargs) = call
+                payload = kwargs['json']
+                self.assertIsNone(payload['reply_to'])
+                self.assertEquals(payload['channel_data'], {
+                    'continue_session': True
+                })
+
+                # second outbound (session ended)
+                call = mock.call_args_list[1]
+                (args, kwargs) = call
+                payload = kwargs['json']
+                self.assertEquals(payload['reply_to'], 'vumi-message-id')
+                self.assertEquals(payload['channel_data'], {
+                    'continue_session': False
+                })
+
+                self.clear_cache()
+        finally:
+            settings.SEND_MESSAGES = False

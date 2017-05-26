@@ -22,6 +22,18 @@ from .views import DefaultTriggerForm, RegisterTriggerForm
 
 class TriggerTest(TembaTest):
 
+    def test_no_trigger_redirects_to_create_page(self):
+        self.login(self.admin)
+
+        # no trigger existing
+        Trigger.objects.all().delete()
+
+        response = self.client.get(reverse('triggers.trigger_list'))
+        self.assertEqual(response.status_code, 302)
+
+        response = self.client.get(reverse('triggers.trigger_list'), follow=True)
+        self.assertEqual(response.request['PATH_INFO'], reverse('triggers.trigger_create'))
+
     def test_keyword_trigger(self):
         self.login(self.admin)
         flow = self.create_flow()
@@ -36,41 +48,49 @@ class TriggerTest(TembaTest):
         self.assertContains(response, voice_flow.name)
 
         # try a keyword with spaces
-        post_data = dict(keyword='keyword with spaces', flow=flow.pk)
+        post_data = dict(keyword='keyword with spaces', flow=flow.id, match_type='F')
         response = self.client.post(reverse("triggers.trigger_keyword"), data=post_data)
         self.assertEquals(1, len(response.context['form'].errors))
 
         # try a keyword with special characters
-        post_data = dict(keyword='keyw!o^rd__', flow=flow.pk)
+        post_data = dict(keyword='keyw!o^rd__', flow=flow.id, match_type='F')
         response = self.client.post(reverse("triggers.trigger_keyword"), data=post_data)
         self.assertEquals(1, len(response.context['form'].errors))
 
         # unicode keyword (Arabic)
-        post_data = dict(keyword='١٠٠', flow=flow.pk)
+        post_data = dict(keyword='١٠٠', flow=flow.id, match_type='F')
         self.client.post(reverse("triggers.trigger_keyword"), data=post_data)
         trigger = Trigger.objects.get(keyword=u'١٠٠')
         self.assertEquals(flow.pk, trigger.flow.pk)
 
         # unicode keyword (Hindi)
-        post_data = dict(keyword='मिलाए', flow=flow.pk)
+        post_data = dict(keyword='मिलाए', flow=flow.id, match_type='F')
         self.client.post(reverse("triggers.trigger_keyword"), data=post_data)
         trigger = Trigger.objects.get(keyword=u'मिलाए')
         self.assertEquals(flow.pk, trigger.flow.pk)
 
         # a valid keyword
-        post_data = dict(keyword='startkeyword', flow=flow.pk)
+        post_data = dict(keyword='startkeyword', flow=flow.id, match_type='F')
         self.client.post(reverse("triggers.trigger_keyword"), data=post_data)
         trigger = Trigger.objects.get(keyword='startkeyword')
         self.assertEquals(flow.pk, trigger.flow.pk)
 
         # try a duplicate keyword
-        post_data = dict(keyword='startkeyword', flow=flow.pk)
+        post_data = dict(keyword='startkeyword', flow=flow.id, match_type='F')
         response = self.client.post(reverse("triggers.trigger_keyword"), data=post_data)
         self.assertEquals(1, len(response.context['form'].errors))
 
         # see our trigger on the list page
         response = self.client.get(reverse('triggers.trigger_list'))
         self.assertContains(response, 'startkeyword')
+
+        response = self.client.get(reverse('triggers.trigger_list') + '?search=Key')
+        self.assertContains(response, 'startkeyword')
+        self.assertTrue(response.context['object_list'])
+
+        response = self.client.get(reverse('triggers.trigger_list') + '?search=Tottenham')
+        self.assertNotContains(response, 'startkeyword')
+        self.assertFalse(response.context['object_list'])
 
         # archive it
         post_data = dict(action='archive', objects=trigger.pk)
@@ -93,7 +113,7 @@ class TriggerTest(TembaTest):
         trigger.is_archived = True
         trigger.save()
 
-        post_data = dict(keyword='startkeyword', flow=flow.pk)
+        post_data = dict(keyword='startkeyword', flow=flow.id, match_type='F')
         response = self.client.post(reverse("triggers.trigger_keyword"), data=post_data)
         self.assertEquals(Trigger.objects.filter(keyword="startkeyword").count(), 2)
         self.assertEquals(1, Trigger.objects.filter(keyword="startkeyword", is_archived=False).count())
@@ -122,13 +142,13 @@ class TriggerTest(TembaTest):
         self.assertEquals(Trigger.objects.filter(keyword="startkeyword", is_archived=False).count(), 1)
 
         # update trigger with 2 groups
-        post_data = dict(keyword='startkeyword', flow=flow.pk, groups=[group1.pk, group2.pk])
+        post_data = dict(keyword='startkeyword', flow=flow.id, match_type='F', groups=[group1.pk, group2.pk])
         response = self.client.post(reverse("triggers.trigger_keyword"), data=post_data)
         self.assertEquals(Trigger.objects.filter(keyword="startkeyword").count(), 3)
         self.assertEquals(Trigger.objects.filter(keyword="startkeyword", is_archived=False).count(), 2)
 
         # get error when groups overlap
-        post_data = dict(keyword='startkeyword', flow=flow.pk)
+        post_data = dict(keyword='startkeyword', flow=flow.id, match_type='F')
         post_data['groups'] = [group2.pk, group3.pk]
         response = self.client.post(reverse("triggers.trigger_keyword"), data=post_data)
         self.assertEquals(1, len(response.context['form'].errors))
@@ -136,7 +156,7 @@ class TriggerTest(TembaTest):
         self.assertEquals(Trigger.objects.filter(keyword="startkeyword", is_archived=False).count(), 2)
 
         # allow new creation when groups do not overlap
-        post_data = dict(keyword='startkeyword', flow=flow.pk)
+        post_data = dict(keyword='startkeyword', flow=flow.id, match_type='F')
         post_data['groups'] = [group3.pk]
         response = self.client.post(reverse("triggers.trigger_keyword"), data=post_data)
         self.assertEquals(Trigger.objects.filter(keyword="startkeyword").count(), 4)
@@ -625,6 +645,51 @@ class TriggerTest(TembaTest):
         self.assertEquals(1, Trigger.objects.filter(is_archived=False, trigger_type=Trigger.TYPE_MISSED_CALL).count())
         self.assertFalse(active_trigger.pk == Trigger.objects.filter(is_archived=False, trigger_type=Trigger.TYPE_MISSED_CALL)[0].pk)
 
+    def test_new_conversation_trigger_viber(self):
+        self.login(self.admin)
+        flow = self.create_flow()
+        flow2 = self.create_flow()
+
+        # see if we list new conversation triggers on the trigger page
+        create_trigger_url = reverse('triggers.trigger_create', args=[])
+        response = self.client.get(create_trigger_url)
+        self.assertNotContains(response, "conversation is started")
+
+        # add a viber public channel
+        viber_channel = Channel.create(self.org, self.user, None, Channel.TYPE_VIBER_PUBLIC, None, '1001',
+                                       uuid='00000000-0000-0000-0000-000000001234',
+                                       config={Channel.CONFIG_AUTH_TOKEN: "auth_token"})
+
+        # should now be able to create one
+        response = self.client.get(create_trigger_url)
+        self.assertContains(response, "conversation is started")
+
+        response = self.client.get(reverse('triggers.trigger_new_conversation', args=[]))
+        self.assertEqual(response.context['form'].fields['channel'].queryset.count(), 1)
+        self.assertTrue(viber_channel in response.context['form'].fields['channel'].queryset.all())
+
+        # create a facebook channel
+        fb_channel = Channel.add_facebook_channel(self.org, self.user, 'Temba', 1001, 'fb_token')
+
+        response = self.client.get(reverse('triggers.trigger_new_conversation', args=[]))
+        self.assertEqual(response.context['form'].fields['channel'].queryset.count(), 2)
+        self.assertTrue(viber_channel in response.context['form'].fields['channel'].queryset.all())
+        self.assertTrue(fb_channel in response.context['form'].fields['channel'].queryset.all())
+
+        response = self.client.post(reverse('triggers.trigger_new_conversation', args=[]),
+                                    data=dict(channel=viber_channel.id, flow=flow.id))
+        self.assertEqual(response.status_code, 200)
+
+        trigger = Trigger.objects.get(trigger_type=Trigger.TYPE_NEW_CONVERSATION, is_active=True, is_archived=False)
+        self.assertEqual(trigger.channel, viber_channel)
+        self.assertEqual(trigger.flow, flow)
+
+        # try to create another one, fails as we already have a trigger for that channel
+        response = self.client.post(reverse('triggers.trigger_new_conversation', args=[]),
+                                    data=dict(channel=viber_channel.id, flow=flow2.id))
+        self.assertEqual(response.status_code, 200)
+        self.assertFormError(response, 'form', 'channel', 'Trigger with this Channel already exists.')
+
     def test_new_conversation_trigger(self):
         self.login(self.admin)
         flow = self.create_flow()
@@ -861,7 +926,7 @@ class TriggerTest(TembaTest):
         flow = self.create_flow()
 
         # a valid keyword
-        post_data = dict(keyword='kiki', flow=flow.pk)
+        post_data = dict(keyword='kiki', flow=flow.id, match_type='F')
         self.client.post(reverse("triggers.trigger_keyword"), data=post_data)
         trigger = Trigger.objects.get(keyword='kiki')
         self.assertEquals(flow.pk, trigger.flow.pk)
@@ -870,21 +935,18 @@ class TriggerTest(TembaTest):
 
         response = self.client.get(update_url)
         self.assertEquals(response.status_code, 200)
-        self.assertEquals(len(response.context['form'].fields), 4)
+        self.assertEquals(len(response.context['form'].fields), 5)
 
         group = self.create_group("first", [])
 
-        post_data = dict()
-        post_data['keyword'] = 'koko'
-        post_data['flow'] = flow.pk
-        post_data['groups'] = [group.pk]
+        post_data = dict(keyword='koko', flow=flow.id, match_type='O', groups=[group.id])
+        self.client.post(update_url, post_data, follow=True)
 
-        response = self.client.post(update_url, post_data, follow=True)
-
-        updated_trigger = Trigger.objects.get(pk=trigger.pk)
-        self.assertEquals(updated_trigger.keyword, 'koko')
-        self.assertEquals(updated_trigger.flow.pk, flow.pk)
-        self.assertTrue(group in updated_trigger.groups.all())
+        trigger.refresh_from_db()
+        self.assertEquals(trigger.keyword, 'koko')
+        self.assertEquals(trigger.match_type, Trigger.MATCH_ONLY_WORD)
+        self.assertEquals(trigger.flow, flow)
+        self.assertTrue(group in trigger.groups.all())
 
     def test_trigger_handle(self):
         self.contact = self.create_contact('Eric', '+250788382382')
@@ -903,8 +965,8 @@ class TriggerTest(TembaTest):
 
         # setup a flow and keyword trigger
         flow = self.create_flow()
-        Trigger.objects.create(org=self.org, keyword='when', flow=flow,
-                               created_by=self.admin, modified_by=self.admin)
+        trigger = Trigger.objects.create(org=self.org, keyword='when', flow=flow,
+                                         created_by=self.admin, modified_by=self.admin)
 
         incoming = self.create_msg(direction=INCOMING, contact=self.contact, text="when is it?")
 
@@ -914,6 +976,37 @@ class TriggerTest(TembaTest):
         # should also have a flow run
         run = FlowRun.objects.get()
         self.assertTrue(run.responded)
+
+        # change match type to 'only'
+        trigger.match_type = Trigger.MATCH_ONLY_WORD
+        trigger.save()
+
+        # check message is not handled
+        incoming = self.create_msg(direction=INCOMING, contact=self.contact, text="when and where?")
+        self.assertFalse(Trigger.find_and_handle(incoming))
+
+        incoming = self.create_msg(direction=INCOMING, contact=self.contact, text="  WHEN! ")
+        self.assertTrue(Trigger.find_and_handle(incoming))
+
+        incoming = self.create_msg(direction=INCOMING, contact=self.contact, text="\WHEN")
+        self.assertTrue(Trigger.find_and_handle(incoming))
+
+        # change match type back to 'first'
+        trigger.match_type = Trigger.MATCH_FIRST_WORD
+        trigger.save()
+
+        # test that trigger unstops contact if needed
+        self.contact.stop(self.admin)
+
+        self.contact.refresh_from_db()
+        self.assertTrue(self.contact.is_stopped)
+
+        incoming = self.create_msg(direction=INCOMING, contact=self.contact, text="when is it?")
+        self.assertTrue(Trigger.find_and_handle(incoming))
+
+        self.contact.refresh_from_db()
+        self.assertFalse(self.contact.is_stopped)
+        self.assertEqual(FlowRun.objects.all().count(), 4)
 
         # create trigger for specific contact group
         group = self.create_group("first", [self.contact2])
@@ -998,14 +1091,10 @@ class TriggerTest(TembaTest):
                                          created_by=self.admin, modified_by=self.admin)
         trigger.groups.add(group)
 
-        dependencies = flow.get_dependencies()
-        del dependencies['groups']
-
-        # make sure our root flow is included
-        dependencies['flows'].add(flow)
+        components = self.org.resolve_dependencies([flow], [], include_triggers=True)
 
         # export everything
-        export = self.org.export_definitions('http://rapidpro.io', **dependencies)
+        export = self.org.export_definitions('http://rapidpro.io', components)
 
         # remove our trigger
         Trigger.objects.all().delete()
@@ -1037,7 +1126,8 @@ class TriggerTest(TembaTest):
                                                       dict(account_key="11111",
                                                            access_token=str(uuid4()),
                                                            transport_name="ussd_transport",
-                                                           conversation_key="22222"))
+                                                           conversation_key="22222"),
+                                                      role=Channel.ROLE_USSD)
 
         # flow options should show ussd flow example
         response = self.client.get(reverse("triggers.trigger_ussd"))

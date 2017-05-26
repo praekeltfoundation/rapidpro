@@ -13,6 +13,14 @@ defaultRuleSetType = ->
   else
     'wait_message'
 
+defaultActionSetType = ->
+  if window.ivr
+    'say'
+  else if window.ussd
+    'end_ussd'
+  else
+    'reply'
+
 app.controller 'RevisionController', [ '$scope', '$rootScope', '$log', '$timeout', 'Flow', 'Revisions', ($scope, $rootScope, $log, $timeout, Flow, Revisions) ->
 
   $scope.revisions = ->
@@ -170,7 +178,7 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
 
 
   # Handle uploading of audio files for IVR recorded prompts
-  $scope.onFileSelect = ($files, actionset, action) ->
+  $scope.onFileSelect = ($files, actionset, action, save=true) ->
 
     if window.dragging or not window.mutable
       return
@@ -178,17 +186,37 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
     scope = @
     # enforce just one file
     if $files.length > 1
-      showDialog("Too Many Files", "To upload a sound file, please drag and drop one file for each step.")
+      showDialog("Too Many Files", "To upload a file, please drag and drop one file for each step.")
       return
 
-    # make sure its an audio file
     file = $files[0]
-    if file.type != 'audio/wav' and file.type != 'audio/x-wav'
-      showDialog('Wrong File Type', 'Audio files need to in the WAV format. Please choose a WAV file and try again.')
+    if not file.type
+      return
+
+    # check for valid voice prompts
+    if action.type == 'say' and file.type != 'audio/wav' and file.type != 'audio/x-wav'
+      showDialog('Invalid Format', 'Voice prompts must in wav format. Please choose a wav file and try again.')
+      return
+
+    parts = file.type.split('/')
+    media_type = parts[0]
+    media_encoding = parts[1]
+
+    if action.type in ['reply', 'send']
+      if media_type not in ['audio', 'video', 'image']
+        showDialog('Invalid Attachment', 'Attachments must be either video, audio, or an image.')
+        return
+
+      if media_type == 'audio' and media_encoding != 'mp3'
+        showDialog('Invalid Format', 'Audio attachments must be encoded as mp3 files.')
+        return
+
+    if action.type in ['reply', 'send'] and (file.size > 20000000 or (file.name.endsWith('.jpg') and file.size > 500000))
+      showDialog('File Size Exceeded', "The file size should be less than 500kB for images and less than 20MB for audio and video files. Please choose another file and try again.")
       return
 
     # if we have a recording already, confirm they want to replace it
-    if action._translation_recording
+    if action.type == 'say' and action._translation_recording
       modal = showDialog('Overwrite Recording', 'This step already has a recording, would you like to replace this recording with ' + file.name + '?', 'Overwrite Recording', false)
       modal.result.then (value) ->
         if value == 'ok'
@@ -196,25 +224,62 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
           scope.onFileSelect($files, actionset, action)
       return
 
+    # if we have an attachment already, confirm they want to replace it
+    if action.type in ['reply', 'send'] and action._media
+      modal = showDialog('Overwrite Attachment', 'This step already has an attachment, would you like to replace this attachment with ' + file.name + '?', 'Overwrite Attachemnt', false)
+      modal.result.then (value) ->
+        if value == 'ok'
+          action._media = null
+          scope.onFileSelect($files, actionset, action)
+      return
+
+
     action.uploading = true
+
+    uploadURL = null
+    if action.type == 'say'
+      uploadURL = window.uploadURL
+
+    if action.type in ['reply', 'send']
+      uploadURL = window.uploadMediaURL
+
+    if not uploadURL
+      return
+
     $scope.upload = $upload.upload
-      url: window.uploadURL
+      url: uploadURL
       data:
         actionset: actionset.uuid
-        action: action.uuid
+        action:  if action.uuid? then action.uuid else ''
       file: file
     .progress (evt) ->
       $log.debug("percent: " + parseInt(100.0 * evt.loaded / evt.total))
       return
     .success (data, status, headers, config) ->
-      if not action.recording
-        action.recording = {}
-      action.recording[Flow.language.iso_code] = data['path']
+      if action.type == 'say'
+        if not action.recording
+          action.recording = {}
+        action.recording[Flow.language.iso_code] = data['path']
+
+      if action.type in ['reply', 'send']
+        if not action.media
+          action.media = {}
+        action.media[Flow.language.iso_code] = file.type + ':' + data['path']
 
       # make sure our translation state is updated
       action.uploading = false
       action.dirty = true
-      Flow.saveAction(actionset, action)
+
+      if action.media and action.media[Flow.language.iso_code]
+        parts = action.media[Flow.language.iso_code].split(/:(.+)/)
+        if parts.length >= 2
+          action._media =
+            mime: parts[0]
+            url:  window.mediaURL + parts[1]
+            type: parts[0].split('/')[0]
+
+      if save
+        Flow.saveAction(actionset, action)
       return
 
     return
@@ -304,8 +369,10 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
 
   $scope.onConnectorDrop = (connection) ->
 
-    $(connection.sourceId).parent().removeClass('reconnecting')
+    if not $rootScope.ghost and connection.targetId == connection.suspendedElementId
+      return false
 
+    $(connection.sourceId).parent().removeClass('reconnecting')
     source = connection.sourceId.split('_')
 
     createdNewNode = false
@@ -325,7 +392,7 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
             y: ghost[0].offsetTop
             uuid: targetId
             actions: [
-              type: if window.ivr then 'say' else 'reply'
+              type: defaultActionSetType()
               msg: msg
               uuid: uuid()
             ]
@@ -361,7 +428,6 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
       $rootScope.ghost = null
 
     if not createdNewNode
-
       to = connection.targetId
 
       # When we make a bad drop, jsplumb will give us a sourceId but no source
@@ -397,7 +463,7 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
       uuid: uuid()
       actions: [
         uuid: uuid()
-        type: if window.ivr then 'say' else 'reply'
+        type: defaultActionSetType()
         msg: msg
       ]
 
@@ -413,8 +479,8 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
       y: 0
       uuid: uuid()
       label: "Response " + (Flow.flow.rule_sets.length + 1)
-      webhook_action: null,
-      ruleset_type: defaultRuleSetType(),
+      webhook_action: null
+      ruleset_type: defaultRuleSetType()
       rules: [
         test:
           test: "true"
@@ -487,6 +553,8 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
             ruleset: ruleset
             dragSource: dragSource
           scope: $scope
+          flowController: -> $scope
+
         $scope.dialog = utils.openModal("/partials/node_editor", NodeEditorController, resolveObj)
 
       else
@@ -495,6 +563,8 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
             nodeType: 'rules'
             ruleset: ruleset
             dragSource: dragSource
+          flowController: -> $scope
+
         $scope.dialog = utils.openModal("/partials/node_editor", NodeEditorController, resolveObj)
 
   $scope.confirmRemoveWebhook = (event, ruleset) ->
@@ -594,8 +664,9 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
         nodeType: 'actions'
         actionset: actionset
         action:
-          type: if window.ivr then 'say' else 'reply'
+          type: defaultActionSetType()
           uuid: uuid()
+      flowController: -> $scope
 
     $scope.dialog = utils.openModal("/partials/node_editor", NodeEditorController, resolveObj)
 
@@ -604,6 +675,10 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
 
   $scope.isMoveable = (action) ->
     return Flow.isMoveableAction(action)
+
+  $scope.hasEndUssd = (actionset) ->
+    actionset.actions?.some (action) ->
+      action.type == "end_ussd"
 
   $scope.confirmRemoveAction = (event, actionset, action) ->
 
@@ -647,7 +722,7 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
     # if its the base language, don't show the from text
     if Flow.language and Flow.flow.base_language != Flow.language.iso_code
 
-      if action.type in ["send", "reply", "say"]
+      if action.type in ["send", "reply", "say", "end_ussd"]
 
         fromText = action.msg[Flow.flow.base_language]
 
@@ -680,6 +755,7 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
           actionset: actionset
           action: action
           dragSource: dragSource
+        flowController: -> $scope
 
       $scope.dialog = utils.openModal("/partials/node_editor", NodeEditorController, resolveObj)
 
@@ -744,6 +820,15 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
         Flow.fetchRecentMessages(ruleset.uuid, categoryTo, categoryFrom).then (response) ->
           category._messages = response.data
     , 500
+
+  $scope.clickShowActionMedia = ->
+    clicked = this
+    action = clicked.action
+    resolveObj =
+      action: -> action
+      type: -> "attachment-viewer"
+
+    $scope.dialog = utils.openModal("/partials/attachment_viewer", AttachmentViewerController , resolveObj)
 
 ]
 
@@ -820,7 +905,7 @@ TranslationController = ($scope, $modalInstance, languages, translation) ->
   $scope.cancel = ->
     $modalInstance.dismiss "cancel"
 
-NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow, Plumb, utils, options) ->
+NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow, flowController, Plumb, utils, options) ->
 
   # let our template know our editor type
   $scope.flow = Flow.flow
@@ -868,7 +953,7 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
 
     # our placeholder actions if they flip
     action =
-      type: if window.ivr then 'say' else 'reply'
+      type: defaultActionSetType()
       uuid: uuid()
 
     actionset =
@@ -1060,6 +1145,9 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
     if $scope.formData.rulesetConfig
       return $scope.formData.rulesetConfig.type in Flow.supportsRules
 
+  $scope.isRuleVisible = (rule) ->
+    return flow.flow_type in rule._config.filter
+
   $scope.getFlowsUrl = (flow) ->
     url = "/flow/?_format=select2"
     if Flow.flow.flow_type == 'S'
@@ -1153,11 +1241,7 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
         _base: categoryName
 
   $scope.isVisibleOperator = (operator) ->
-    if $scope.formData.rulesetConfig.type == 'wait_digits'
-      if not operator.voice
-        return false
-
-    return operator.show
+    return flow.flow_type in operator.filter
 
   $scope.isVisibleRulesetType = (rulesetConfig) ->
     valid = flow.flow_type in rulesetConfig.filter
@@ -1200,6 +1284,8 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
       categoryName = "state"
     else if op == "phone"
       categoryName = "phone"
+    else if op == "has_email"
+      categoryName = "email"
     else if op == "regex"
       categoryName = "matches"
     else if op == "date"
@@ -1604,6 +1690,18 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
       Flow.markDirty()
     ,0
 
+  $scope.clickShowActionMedia = ->
+    clicked = this
+    action = clicked.action
+    resolveObj =
+      action: -> action
+      type: -> "attachment-viewer"
+
+    $scope.dialog = utils.openModal("/partials/attachment_viewer", AttachmentViewerController , resolveObj)
+
+  $scope.onFileSelect = ($files, actionset, action) ->
+    flowController.onFileSelect($files, actionset, action, false)
+
   $scope.cancel = ->
     stopWatching()
     $modalInstance.dismiss "cancel"
@@ -1656,7 +1754,11 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
     Flow.saveAction(actionset, $scope.action)
     $modalInstance.close()
 
-  # Saving a reply SMS in the flow
+  $scope.removeAttachment = ->
+    $scope.action.media = null
+    $scope.action._media = null
+
+  # Saving a reply message in the flow
   $scope.saveMessage = (message, type='reply') ->
 
     if typeof($scope.action.msg) != "object"
@@ -1667,7 +1769,7 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
     Flow.saveAction(actionset, $scope.action)
     $modalInstance.close()
 
-  # Saving an SMS to somebody else
+  # Saving a message to somebody else
   $scope.saveSend = (omnibox, message) ->
 
     groups = []
@@ -1694,7 +1796,7 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
     Flow.saveAction(actionset, $scope.action)
     $modalInstance.close()
 
-  # Saving labels to add to an SMS
+  # Saving labels to add to a message
   $scope.saveLabels = (msgLabels) ->
 
     labels = []
@@ -1909,6 +2011,14 @@ TerminalWarningController = ($scope, $modalInstance, $log, actionset, flowContro
 
     if not startsFlow
       flowController.addAction(actionset)
+
+  $scope.cancel = ->
+    $modalInstance.dismiss "cancel"
+
+
+AttachmentViewerController = ($scope, $modalInstance, action, type) ->
+  $scope.action = action
+  $scope.type = type
 
   $scope.cancel = ->
     $modalInstance.dismiss "cancel"

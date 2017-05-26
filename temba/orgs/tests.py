@@ -6,6 +6,7 @@ import nexmo
 import pytz
 import six
 
+from bs4 import BeautifulSoup
 from context_processors import GroupPermWrapper
 from datetime import timedelta
 from dateutil.relativedelta import relativedelta
@@ -313,12 +314,12 @@ class OrgTest(TembaTest):
                 response.json = response.json()
             return response
 
-        url = reverse('api.v1.broadcasts')
-        response = postAPI(url, dict(contacts=[mark.uuid], text="You are adistant cousin to a wealthy person."))
+        url = reverse('api.v2.broadcasts')
+        response = postAPI(url, dict(contacts=[mark.uuid], text="You are a distant cousin to a wealthy person."))
         self.assertContains(response, "Sorry, your account is currently suspended. To enable sending messages, please contact support.", status_code=400)
 
-        url = reverse('api.v1.runs')
-        response = postAPI(url, dict(flow_uuid=flow.uuid, phone="+250788123123"))
+        url = reverse('api.v2.flow_starts')
+        response = postAPI(url, dict(flow=flow.uuid, urns=["tel:+250788123123"]))
         self.assertContains(response, "Sorry, your account is currently suspended. To enable sending messages, please contact support.", status_code=400)
 
         # still no messages or runs
@@ -2410,7 +2411,7 @@ class BulkExportTest(TembaTest):
 
         # now make sure a call to get dependencies succeeds and shows our flow
         triggeree = Flow.objects.filter(name='Triggeree').first()
-        self.assertIn(triggeree, flow.get_dependencies()['flows'])
+        self.assertIn(triggeree, flow.get_dependencies())
 
     def test_trigger_flow(self):
         self.import_file('triggered_flow')
@@ -2444,12 +2445,11 @@ class BulkExportTest(TembaTest):
 
         parent = Flow.objects.filter(name='Parent Flow').first()
         child = Flow.objects.filter(name='Child Flow').first()
-        self.assertIn(child, parent.get_dependencies()['flows'])
+        self.assertIn(child, parent.get_dependencies())
 
         self.login(self.admin)
         response = self.client.get(reverse('orgs.org_export'))
 
-        from bs4 import BeautifulSoup
         soup = BeautifulSoup(response.content, "html.parser")
         group = str(soup.findAll("div", {"class": "exportables bucket"})[0])
 
@@ -2482,6 +2482,15 @@ class BulkExportTest(TembaTest):
         flow = Flow.objects.filter(name="%s" % flow.name).first()
         actionset = ActionSet.objects.filter(flow=flow).order_by('y').first()
         self.assertTrue('@contact.name' in actionset.get_actions()[0].groups)
+
+    def test_import_voice_flows_expiration_time(self):
+        # all imported voice flows should have a max expiration time of 15 min
+        self.get_flow('ivr_child_flow')
+
+        self.assertEqual(Flow.objects.filter(flow_type=Flow.VOICE).count(), 1)
+        voice_flow = Flow.objects.get(flow_type=Flow.VOICE)
+        self.assertEqual(voice_flow.name, 'Voice Flow')
+        self.assertEqual(voice_flow.expires_after_minutes, 15)
 
     def test_missing_flows_on_import(self):
         # import a flow that starts a missing flow
@@ -2552,10 +2561,8 @@ class BulkExportTest(TembaTest):
         actions = action_set.get_actions_dict()
         action_msg = actions[0]['msg']
 
-        event_msg = json.loads(event.message)
-
-        self.assertEqual(event_msg['swa'], 'hello')
-        self.assertEqual(event_msg['eng'], 'Hey')
+        self.assertEqual(event.message['swa'], 'hello')
+        self.assertEqual(event.message['eng'], 'Hey')
 
         # base language for this flow is 'swa' despite our org languages being unset
         self.assertEqual(event.flow.base_language, 'swa')
@@ -2598,7 +2605,7 @@ class BulkExportTest(TembaTest):
         trigger.flow = confirm_appointment
         trigger.save()
 
-        message_flow = Flow.objects.filter(flow_type='M', campaignevent__offset=-1).order_by('pk').first()
+        message_flow = Flow.objects.filter(flow_type='M', events__offset=-1).order_by('pk').first()
         action_set = message_flow.action_sets.order_by('-y').first()
         actions = action_set.get_actions_dict()
         self.assertEquals("Hi there, just a quick reminder that you have an appointment at The Clinic at @contact.next_appointment. If you can't make it please call 1-888-THE-CLINIC.", actions[0]['msg']['base'])
@@ -2623,7 +2630,7 @@ class BulkExportTest(TembaTest):
         self.assertTrue(Flow.objects.filter(pk=message_flow.pk, is_active=False))
 
         # find our new message flow, and see that the original message is there
-        message_flow = Flow.objects.filter(flow_type='M', campaignevent__offset=-1, is_active=True).order_by('pk').first()
+        message_flow = Flow.objects.filter(flow_type='M', events__offset=-1, is_active=True).order_by('pk').first()
         action_set = Flow.objects.get(pk=message_flow.pk).action_sets.order_by('-y').first()
         actions = action_set.get_actions_dict()
         self.assertEquals("Hi there, just a quick reminder that you have an appointment at The Clinic at @contact.next_appointment. If you can't make it please call 1-888-THE-CLINIC.", actions[0]['msg']['base'])
@@ -2665,7 +2672,7 @@ class BulkExportTest(TembaTest):
         self.org.import_app(exported, self.admin, site='http://app.rapidpro.io')
         assert_object_counts()
 
-        message_flow = Flow.objects.filter(flow_type='M', campaignevent__offset=-1, is_active=True).order_by('pk').first()
+        message_flow = Flow.objects.filter(flow_type='M', events__offset=-1, is_active=True).order_by('pk').first()
 
         # make sure the base language is set to 'base', not 'eng'
         self.assertEqual(message_flow.base_language, 'base')
@@ -2999,6 +3006,37 @@ class TestStripeCredits(TembaTest):
         self.assertEquals("RapidPro Receipt", email.subject)
         self.assertTrue('Rudolph' in email.body)
         self.assertTrue('Visa' in email.body)
+        self.assertTrue('$20' in email.body)
+
+    @patch('stripe.Customer.create')
+    @patch('stripe.Charge.create')
+    @override_settings(SEND_EMAILS=True)
+    def test_add_btc_credits(self, charge_create, customer_create):
+        customer_create.return_value = dict_to_struct('Customer', dict(id='stripe-cust-1'))
+        charge_create.return_value = \
+            dict_to_struct('Charge', dict(id='stripe-charge-1', card=None,
+                                          source=dict_to_struct('Source',
+                                                                dict(bitcoin=dict_to_struct('Bitcoin', dict(address='abcde'))))))
+
+        settings.BRANDING[settings.DEFAULT_BRAND]['bundles'] = (dict(cents="2000", credits=1000, feature=""),)
+
+        self.org.add_credits('2000', 'stripe-token', self.admin)
+        self.assertTrue(2000, self.org.get_credits_total())
+
+        # assert we saved our charge info
+        topup = self.org.topups.last()
+        self.assertEqual('stripe-charge-1', topup.stripe_charge)
+
+        # and we saved our stripe customer info
+        org = Org.objects.get(id=self.org.id)
+        self.assertEqual('stripe-cust-1', org.stripe_customer)
+
+        # assert we sent our confirmation emai
+        self.assertEqual(1, len(mail.outbox))
+        email = mail.outbox[0]
+        self.assertEquals("RapidPro Receipt", email.subject)
+        self.assertTrue('bitcoin' in email.body)
+        self.assertTrue('abcde' in email.body)
         self.assertTrue('$20' in email.body)
 
     @patch('stripe.Customer.create')

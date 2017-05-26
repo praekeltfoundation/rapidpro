@@ -12,6 +12,8 @@ import six
 from temba.utils.gsm7 import is_gsm7
 from django.utils.http import urlencode
 
+from temba.utils.http import HttpEvent
+
 
 class NexmoValidationError(Exception):
     pass
@@ -40,7 +42,14 @@ class NexmoClient(nx.Client):
             params['pattern'] = six.text_type(pattern).strip('+')
         params['size'] = size
 
-        response = nx.Client.get_account_numbers(self, params=params)
+        try:
+            response = nx.Client.get_account_numbers(self, params=params)
+        except nx.ClientError as e:
+            if e.message.startswith('429'):
+                time.sleep(1)
+                response = nx.Client.get_account_numbers(self, params=params)
+            else:
+                raise e
 
         if int(response.get('count', 0)):
             return response['numbers']
@@ -64,28 +73,24 @@ class NexmoClient(nx.Client):
         log_params['api_secret'] = 'x' * len(log_params['api_secret'])
         log_url = NexmoClient.SEND_URL + '?' + urlencode(log_params)
 
+        event = HttpEvent('GET', log_url)
+
         try:
             response = requests.get(NexmoClient.SEND_URL, params=params)
+            event.status_code = response.status_code
+            event.response_body = response.text
+
             response_json = response.json()
             messages = response_json.get('messages', [])
         except:
-            raise SendException(u"Failed sending message: %s" % response.text,
-                                method=response.request.method,
-                                url=log_url,
-                                request=None,
-                                response=response.text,
-                                response_status=response.status_code)
+            raise SendException(u"Failed sending message: %s" % response.text, event=event)
 
         if not messages or int(messages[0]['status']) != 0:
             raise SendException(u"Failed sending message, received error status [%s]" % messages[0]['status'],
-                                method=response.request.method,
-                                url=log_url,
-                                request=None,
-                                response=response.text,
-                                response_status=response.status_code)
+                                event=event)
 
         else:
-            return messages[0]['message-id'], response
+            return messages[0]['message-id'], event
 
     def search_numbers(self, country, pattern):
         response = nx.Client.get_available_numbers(self, country_code=country, pattern=pattern, search_pattern=1,
@@ -104,13 +109,27 @@ class NexmoClient(nx.Client):
     def buy_nexmo_number(self, country, number):
         number = number.lstrip('+')
         params = dict(msisdn=number, country=country)
-        nx.Client.buy_number(self, params=params)
+        try:
+            nx.Client.buy_number(self, params=params)
+        except nx.ClientError as e:
+            if e.message.startswith('429'):
+                time.sleep(1)
+                nx.Client.buy_number(self, params=params)
+            else:  # pragma: needs cover
+                raise e
 
     def update_nexmo_number(self, country, number, moURL, app_id):
         number = number.lstrip('+')
         params = dict(moHttpUrl=moURL, msisdn=number, country=country, voiceCallbackType='app',
                       voiceCallbackValue=app_id)
-        nx.Client.update_number(self, params=params)
+        try:
+            nx.Client.update_number(self, params=params)
+        except nx.ClientError as e:
+            if e.message.startswith('429'):
+                time.sleep(1)
+                nx.Client.update_number(self, params=params)
+            else:  # pragma: needs cover
+                raise e
 
     def test_credentials(self):  # pragma: needs cover
         try:
