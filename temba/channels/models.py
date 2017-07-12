@@ -3087,6 +3087,7 @@ class Channel(TembaModel):
                     sent_count -= 1
                     raise Exception(_("Unknown channel type: %(channel)s") % {'channel': channel.channel_type})
             except SendException as e:
+
                 import traceback
                 traceback.print_exc(e)
 
