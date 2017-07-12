@@ -3087,19 +3087,20 @@ class Channel(TembaModel):
                     sent_count -= 1
                     raise Exception(_("Unknown channel type: %(channel)s") % {'channel': channel.channel_type})
             except SendException as e:
-                ChannelLog.log_exception(channel, msg, e)
 
                 import traceback
                 traceback.print_exc(e)
+
+                ChannelLog.log_exception(channel, msg, e)
 
                 Msg.mark_error(r, channel, msg, fatal=e.fatal)
                 sent_count -= 1
 
             except Exception as e:
-                ChannelLog.log_error(msg, six.text_type(e))
-
                 import traceback
                 traceback.print_exc(e)
+
+                ChannelLog.log_error(msg, six.text_type(e))
 
                 Msg.mark_error(r, channel, msg)
                 sent_count -= 1
