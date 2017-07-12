@@ -9,7 +9,6 @@ import time
 from django.conf import settings
 from django.db import models
 from smartmin.models import SmartModel
-from temba.api.models import get_api_user
 from temba.channels.models import Channel
 from temba.contacts.models import Contact, TEL_SCHEME
 from temba.orgs.models import Org, TRANSFERTO_ACCOUNT_LOGIN, TRANSFERTO_AIRTIME_API_TOKEN, TRANSFERTO_ACCOUNT_CURRENCY
@@ -97,7 +96,7 @@ class AirtimeTransfer(SmartModel):
 
     @classmethod
     def trigger_airtime_event(cls, org, ruleset, contact, event):
-
+        from temba.api.models import get_api_user
         api_user = get_api_user()
 
         channel = None
@@ -169,13 +168,26 @@ class AirtimeTransfer(SmartModel):
             targeted_prices = [float(i) for i in local_info_value_list if float(i) <= float(amount)]
 
             denomination = None
-            skuid = None
+            skuid = content_json.get('skuid', None)
             if targeted_prices:
                 denomination_key = max(targeted_prices)
                 denomination = product_local_value_map.get(denomination_key, None)
-                airtime.denomination = denomination
-
                 skuid = product_skuid_value_map.get(denomination)
+
+            elif skuid:
+                minimum_local = content_json.get('open_range_minimum_amount_local_currency', 0)
+                maximum_local = content_json.get('open_range_maximum_amount_local_currency', 0)
+                minimum_acc_currency = content_json.get('open_range_minimum_amount_requested_currency', 0)
+                maximum_acc_currency = content_json.get('open_range_maximum_amount_requested_currency', 0)
+
+                local_interval = float(maximum_local) - float(minimum_local)
+                acc_currency_interval = float(maximum_acc_currency) - float(minimum_acc_currency)
+                amount_interval = float(amount) - float(minimum_local)
+                amount_interval_acc_currency = ((amount_interval * acc_currency_interval) / local_interval)
+                denomination = str(float(minimum_acc_currency) + amount_interval_acc_currency)
+
+            if denomination is not None:
+                airtime.denomination = denomination
 
             if float(amount) <= 0:
                 message = "Failed by invalid amount configuration or missing amount configuration for %s" % country_name

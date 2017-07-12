@@ -1,3 +1,179 @@
+v3.0.135
+----------
+ * Make 'only' keyword triggers ignore punctuation
+ * Make check_campaigns_task lock on the event fires that it will queue
+ * Break up flow event fires into sub-batches of 500
+ * Ignore and ack incoming messages from Android relayer that have no number
+
+v3.0.134
+----------
+ * Add match_type option to triggers so users can create triggers which only match when message only contains keyword
+ * Allow Africa's talking to retry sending message
+ * Allow search on the triggers pages
+ * Clear results for analytics when user removes a flow run
+
+v3.0.133
+----------
+ * Make Msg.get_sync_commands more efficent
+ * Fix open range airtime transfers
+ * Fix multiple Android channels sync
+ * Fix parsing of macrokiosk channel time format
+ * Ensure that our select2 boxes show "Add new" option even if there is a partial match with an existing item
+ * Switch to new translatable fields and remove old Broadcast fields
+ * Add Firebase Cloud messaging support for Android channels
+
+v3.0.132
+----------
+ * Migration to populate new translatable fields on old broadcasts. This migration is slow on a large database so it's
+   recommended that large deployments fake it and run it manually.
+
+v3.0.128
+----------
+ * Add new translatable fields to Broadcast and ensure they're populated for new stuff
+
+v3.0.127
+----------
+ * Fix autocomplete for items containing digits or other items
+ * Make autocomplete dropdown disappear when user clicks in input box
+ * Replace usages of "SMS" with "message" in editor
+ * Allow same subflow to be called without pause in between
+
+v3.0.126
+----------
+ * Fix exporting messages by a label folder
+ * Improve performance of org export page for large orgs
+ * Make it easier to enable/disable debug toolbar
+ * Increase channel logging for requests and responses
+ * Change contact api v1 to insert nonexistent fields
+ * Graceful termination of USSD sessions
+
+v3.0.125
+----------
+ * Don't show deleted flows on list page
+ * Convert timestamps sent by MacroKiosk from local Kuala Lumpur time
+
+v3.0.124
+----------
+ * Move initial IVR expiration check to status update on the call
+ * Hide request time in channel log if unset
+ * Check the existance of broadcast recipients before adding
+ * Voice flows import should never allow expirations longer than 15 mins
+ * Fix parse location to correctly use the tokenizized text if the location was matched for the entire text
+ * Use updates instead of full Channel saves() on realyer syncs, only update when there are changes
+
+v3.0.123
+----------
+ * Use flow starts for triggers that operate on groups
+ * Handle throttling errors from Nexmo when using API to add new numbers
+ * Convert campaign event messages to HSTORE fields
+
+v3.0.121
+----------
+ * Add MACROKIOSK channel type
+ * Show media for MMS in simulator
+
+v3.0.120
+----------
+ * Fix send all bug where we append list of messages to another list of messages
+ * Flows endpooint should allow filtering by modified_on
+
+v3.0.119
+----------
+ * More vertical form styling tweaks
+
+v3.0.118
+----------
+ * Add flow link on subflow rulesets in flows
+
+v3.0.117
+----------
+ * Fix styling on campaign event modal
+
+v3.0.116
+----------
+ * Update to latest Raven
+ * Make default form vertical, remove horizontal to vertical css overrides
+ * Add flow run search and deletion
+ * Hangup calls on channels release
+
+v3.0.115
+----------
+ * Allow message exports by label, system label or all messages
+ * Fix for double stacked subflows with immediate exits
+
+v3.0.112
+----------
+ * Archiving a flow should interrupt all the current runs
+
+v3.0.111
+----------
+ * Display webhook results on contact history
+ * Clean up template tags used on contact history
+ * Allow broadcasts to be sent to all urns belonging to the specified contacts
+
+v3.0.109
+----------
+ * Data migration to populate broadcast send_all field
+
+v3.0.108
+----------
+ * Add webhook events trim task with configurable retain times for success and error logs
+
+v3.0.107
+----------
+ * Add send_all broadcast field
+
+v3.0.106
+----------
+ * Remove non_atomic_gets and display message at /api/v1/ to explain API v1 has been replaced
+ * Add squashable model for label counts
+ * Split system label functionality into SystemLabel and SystemLabelCount
+
+v3.0.105
+----------
+ * Link subflow starts in actions
+ * Allow wait to wait in flows with warning
+
+v3.0.104
+----------
+ * Add new has email test, contains phrase test and contains only phrase test
+
+v3.0.103
+----------
+ * Migration to populate FlowNodeCount shouldn't include test contacts
+
+v3.0.102
+----------
+ * Add migration to populate FlowNodeCount
+
+v3.0.101
+----------
+ * Migration to clear no-longer-used flow stats redis keys
+ * Replace remaining cache-based flow stats code with trigger based FlowNodeCount
+
+v3.0.100
+----------
+ * Fix intermittently failing Twilio test
+ * make sure calls have expiration on initiation
+ * Update to latest smartmin
+ * Add redirection for v1 endpoints
+ * Fix webhook docs
+ * Fix MsgCreateSerializer not using specified channel
+ * Test coverage
+ * Fix test coverage issues caused by removing API v1 tests
+ * Ensure surveyor users still have access to the API v2 endpoint thats they need
+ * Remove djangorestframework-xml
+ * Restrict API v1 access to surveyor users
+ * Block all API v2 writes for suspended orgs
+ * Remove all parts of API v1 not used by Surveyor
+
+v3.0.99
+----------
+ * Prioritize msg handling over timeotus and event fires
+ * Remove hamlcompress command as deployments should use regular compress these days
+ * Fix not correctly refreshing dynamic groups when a URN is removed
+ * Allow searching for contacts *with any* value for a given field
+
 v3.0.98
 ----------
  * Fix sidebar nav LESS so that level2 lists don't have fixed height and separate scrolling
