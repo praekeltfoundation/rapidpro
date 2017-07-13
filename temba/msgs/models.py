@@ -711,6 +711,8 @@ class Msg(models.Model):
         task_priority = None
         last_contact = None
 
+        tasks_to_push = []
+
         # we send in chunks of 1,000 to help with contention
         for msg_chunk in chunk_list(all_msgs, 1000):
             # create a temporary list of our chunk so we can iterate more than once
@@ -741,7 +743,7 @@ class Msg(models.Model):
                             if task_priority is None:  # pragma: needs cover
                                 task_priority = DEFAULT_PRIORITY
 
-                            push_task(task_msgs[0]['org'], MSG_QUEUE, SEND_MSG_TASK, task_msgs, priority=task_priority)
+                            tasks_to_push.append((task_msgs, task_priority))
                             task_msgs = []
                             task_priority = None
 
@@ -762,7 +764,14 @@ class Msg(models.Model):
         if task_msgs:
             if task_priority is None:
                 task_priority = DEFAULT_PRIORITY
-            push_task(task_msgs[0]['org'], MSG_QUEUE, SEND_MSG_TASK, task_msgs, priority=task_priority)
+
+            tasks_to_push.append((task_msgs, task_priority))
+
+        def push_tasks(tasks):
+            for msg_task in tasks:
+                push_task(task_msgs[0]['org'], MSG_QUEUE, SEND_MSG_TASK, msg_task[0], priority=msg_task[1])
+
+        on_transaction_commit(lambda: push_tasks(tasks_to_push))
 
     @classmethod
     def process_message(cls, msg):
