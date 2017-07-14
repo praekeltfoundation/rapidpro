@@ -1489,6 +1489,9 @@ class Channel(TembaModel):
         payload['event_url'] = event_url
         payload['content'] = text
 
+        if channel.secret is not None:
+            payload['event_auth'] = {"Authorization": "Token %s" % channel.secret}
+
         if is_ussd:
             session = USSDSession.objects.get_session_with_status_only(msg.session_id)
             # make sure USSD responses are only valid for a short window
