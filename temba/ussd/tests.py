@@ -1009,8 +1009,9 @@ class CeleryTaskTest(TransactionTestCase):
         Channel.objects.all().delete()
         AdminBoundary.objects.all().delete()
         Org.objects.all().delete()
-        User.objects.all().delete()
         Contact.objects.all().delete()
+
+        self.user.delete()
 
     def handle_apply(self, task_class, args=None, kwargs=None, **options):
         self.applied_tasks.append((task_class.name, tuple(args), kwargs))
