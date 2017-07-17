@@ -10,8 +10,10 @@ from django.conf import settings
 from django.core.urlresolvers import reverse
 from django.utils import timezone
 from django_redis import get_redis_connection
+from django.db import transaction
 from mock import patch
 from openpyxl import load_workbook
+from celery.task.base import Task
 from temba.contacts.models import Contact, ContactField, ContactURN, TEL_SCHEME
 from temba.channels.models import Channel, ChannelCount, ChannelEvent, ChannelLog
 from temba.msgs.models import Msg, ExportMessagesTask, RESENT, FAILED, OUTGOING, PENDING, WIRED, DELIVERED, ERRORED
@@ -2070,3 +2072,70 @@ class TagsTest(TembaTest):
         # exception if tag not used correctly
         self.assertRaises(ValueError, self.render_template, '{% load sms %}{% render with bob %}{% endrender %}')
         self.assertRaises(ValueError, self.render_template, '{% load sms %}{% render as %}{% endrender %}')
+
+
+class CeleryTaskTest(TembaTest):
+
+    def setUp(self):
+        super(CeleryTaskTest, self).setUp()
+
+        self.applied_tasks = []
+
+        self.joe = self.create_contact("Joe", "+250788383444")
+
+        self.channel = Channel.create(
+            self.org, self.user, 'RW', Channel.TYPE_JUNEBUG_USSD, None, '1234',
+            config=dict(username='junebug-user', password='junebug-pass', send_url='http://example.org/'),
+            uuid='00000000-0000-0000-0000-000000001234', role=Channel.ROLE_USSD)
+
+    def handle_apply(self, task_class, args=None, kwargs=None, **options):
+        self.applied_tasks.append((task_class.name, tuple(args), kwargs))
+
+    def assert_task_sent(self, task_class, *args, **kwargs):
+        was_sent = any(task_class == task[0] for task in self.applied_tasks)
+        self.assertTrue(was_sent, 'Task not called w/class %s and args %s' % (task_class, args))
+
+    def assertInDB(self, obj, msg=None):
+        """Test for obj's presence in the database."""
+        fullmsg = "Object %r unexpectedly not found in the database" % obj
+        fullmsg += ": " + msg if msg else ""
+        try:
+            type(obj).objects.using('default2').get(pk=obj.pk)
+        except obj.DoesNotExist:
+            self.fail(fullmsg)
+
+    def test_reply_task_added(self):
+        orig_push_tasks = Msg.push_tasks
+        task_apply_orig = Task.apply
+
+        settings.CELERY_ALWAYS_EAGER = False
+        settings.SEND_MESSAGES = True
+
+        try:
+            @classmethod
+            def new_apply(task_class, args=None, kwargs=None, **options):
+                self.handle_apply(task_class, args, kwargs, **options)
+
+            # monkey patch the regular apply with our method
+            Task.apply = new_apply
+
+            @classmethod
+            def new_push_tasks(cls, tasks_to_push):
+                orig_push_tasks(tasks_to_push)
+
+                self.assert_task_sent('send_msg_task')
+                self.assertInDB(msg1)
+
+            Msg.push_tasks = new_push_tasks
+
+            with transaction.atomic():
+                msg1 = Msg.create_outgoing(self.org, self.user, self.joe, "Hello, we heard from you.", channel=self.channel)
+
+                Msg.send_messages([msg1])
+        finally:
+            # Reset the monkey patch to the original method
+            Task.apply = task_apply_orig
+            Msg.push_tasks = orig_push_tasks
+
+            settings.CELERY_ALWAYS_EAGER = True
+            settings.SEND_MESSAGES = False
