@@ -4,6 +4,7 @@ from __future__ import unicode_literals
 import json
 import six
 import uuid
+import pytz
 
 from datetime import datetime, timedelta
 from mock import patch
@@ -12,11 +13,16 @@ from django.core.urlresolvers import reverse
 from django.conf import settings
 from django.utils import timezone
 from django_redis import get_redis_connection
+from django.test import TransactionTestCase
+from celery.task.base import Task
+from django.contrib.auth.models import User
 
 from temba.channels.models import Channel
 from temba.channels.tests import JunebugTestMixin
-from temba.contacts.models import Contact, TEL_SCHEME
+from temba.contacts.models import Contact, TEL_SCHEME, URN
 from temba.msgs.models import WIRED, MSG_SENT_KEY, SENT, Msg, INCOMING, OUTGOING, USSD, DELIVERED, FAILED
+from temba.orgs.models import Org
+from temba.locations.models import AdminBoundary
 from temba.tests import TembaTest, MockResponse
 from temba.triggers.models import Trigger
 from temba.flows.models import FlowRun
@@ -947,3 +953,102 @@ class JunebugUSSDTest(JunebugTestMixin, TembaTest):
                 self.clear_cache()
         finally:
             settings.SEND_MESSAGES = False
+
+
+class CeleryTaskTest(TransactionTestCase):
+
+    def setUp(self):
+        super(CeleryTaskTest, self).setUp()
+
+        self.applied_tasks = []
+
+        self.task_apply_orig = Task.apply
+
+        @classmethod
+        def new_apply(task_class, args=None, kwargs=None, **options):
+            self.handle_apply(task_class, args, kwargs, **options)
+
+        # monkey patch the regular apply with our method
+        Task.apply = new_apply
+        settings.CELERY_ALWAYS_EAGER = False
+        settings.SEND_MESSAGES = True
+
+        self.country = AdminBoundary.objects.create(osm_id='171126', name='Rwanda', level=0)
+        self.user = self.create_user("User")
+
+        self.org = Org.objects.create(name="Temba", timezone=pytz.timezone("Africa/Kigali"), country=self.country,
+                                      brand=settings.DEFAULT_BRAND, created_by=self.user, modified_by=self.user)
+
+        self.org.initialize(topup_size=1000)
+
+        # add users to the org
+        self.user.set_org(self.org)
+        self.org.viewers.add(self.user)
+
+        self.joe = self.create_contact("Joe", "+250788383444")
+
+        self.channel = Channel.create(
+            self.org, self.user, 'RW', Channel.TYPE_JUNEBUG_USSD, None, '1234',
+            config=dict(username='junebug-user', password='junebug-pass', send_url='http://example.org/'),
+            uuid='00000000-0000-0000-0000-000000001234', role=Channel.ROLE_USSD)
+
+    def tearDown(self):
+        super(CeleryTaskTest, self).tearDown()
+
+        # Reset the monkey patch to the original method
+        Task.apply = self.task_apply_orig
+        settings.CELERY_ALWAYS_EAGER = True
+        settings.SEND_MESSAGES = False
+
+    def _fixture_teardown(self):
+        self.country.delete()
+        self.user.delete()
+        self.joe.delete()
+        self.org.delete()
+        self.channel.delete()
+
+    def handle_apply(self, task_class, args=None, kwargs=None, **options):
+        self.applied_tasks.append((task_class.name, tuple(args), kwargs))
+
+    def assert_task_sent(self, task_class, *args, **kwargs):
+        was_sent = any(task_class == task[0] and args == task[1] and kwargs == task[2]
+                       for task in self.applied_tasks)
+        self.assertTrue(was_sent, 'Task not called w/class %s and args %s' % (task_class, args))
+
+    def create_user(self, username):
+        return User.objects.create(username=username)
+
+    def create_contact(self, name=None, number=None, twitter=None, urn=None, is_test=False, **kwargs):
+        """
+        Create a contact in the master test org
+        """
+        urns = []
+        if number:
+            urns.append(URN.from_tel(number))
+        if twitter:
+            urns.append(URN.from_twitter(twitter))
+        if urn:
+            urns.append(urn)
+
+        if not name and not urns:  # pragma: no cover
+            raise ValueError("Need a name or URN to create a contact")
+
+        kwargs['name'] = name
+        kwargs['urns'] = urns
+        kwargs['is_test'] = is_test
+
+        if 'org' not in kwargs:
+            kwargs['org'] = self.org
+        if 'user' not in kwargs:
+            kwargs['user'] = self.user
+
+        return Contact.get_or_create(**kwargs)
+
+    def test_reply_task_added(self):
+        msg1 = Msg.create_outgoing(self.org, self.user, self.joe, "Hello, we heard from you.", channel=self.channel)
+
+        Msg.send_messages([msg1])
+
+        self.assert_task_sent('send_msg_task')
+
+        msg1.delete()
