@@ -16,6 +16,7 @@ from django_redis import get_redis_connection
 from django.test import TransactionTestCase
 from celery.task.base import Task
 from django.contrib.auth.models import User
+from django.db import transaction
 
 from temba.channels.models import Channel
 from temba.channels.tests import JunebugTestMixin
@@ -1000,19 +1001,22 @@ class CeleryTaskTest(TransactionTestCase):
         settings.CELERY_ALWAYS_EAGER = True
         settings.SEND_MESSAGES = False
 
+        from temba.flows.models import clear_flow_users
+        clear_flow_users()
+
     def _fixture_teardown(self):
-        self.country.delete()
-        self.user.delete()
-        self.joe.delete()
-        self.org.delete()
-        self.channel.delete()
+        Msg.objects.all().delete()
+        Channel.objects.all().delete()
+        AdminBoundary.objects.all().delete()
+        Org.objects.all().delete()
+        User.objects.all().delete()
+        Contact.objects.all().delete()
 
     def handle_apply(self, task_class, args=None, kwargs=None, **options):
         self.applied_tasks.append((task_class.name, tuple(args), kwargs))
 
     def assert_task_sent(self, task_class, *args, **kwargs):
-        was_sent = any(task_class == task[0] and args == task[1] and kwargs == task[2]
-                       for task in self.applied_tasks)
+        was_sent = any(task_class == task[0] for task in self.applied_tasks)
         self.assertTrue(was_sent, 'Task not called w/class %s and args %s' % (task_class, args))
 
     def create_user(self, username):
@@ -1044,11 +1048,30 @@ class CeleryTaskTest(TransactionTestCase):
 
         return Contact.get_or_create(**kwargs)
 
+    def assertInDB(self, obj, msg=None):
+        """Test for obj's presence in the database."""
+        fullmsg = "Object %r unexpectedly not found in the database" % obj
+        fullmsg += ": " + msg if msg else ""
+        try:
+            type(obj).objects.using('default2').get(pk=obj.pk)
+        except obj.DoesNotExist:
+            self.fail(fullmsg)
+
     def test_reply_task_added(self):
-        msg1 = Msg.create_outgoing(self.org, self.user, self.joe, "Hello, we heard from you.", channel=self.channel)
+        with transaction.atomic():
+            msg1 = Msg.create_outgoing(self.org, self.user, self.joe, "Hello, we heard from you.", channel=self.channel)
 
-        Msg.send_messages([msg1])
+            orig_push_tasks = Msg.push_tasks
 
-        self.assert_task_sent('send_msg_task')
+            @classmethod
+            def push_tasks(cls, tasks_to_push):
+                orig_push_tasks(tasks_to_push)
 
-        msg1.delete()
+                self.assert_task_sent('send_msg_task')
+                self.assertInDB(msg1)
+
+            Msg.push_tasks = push_tasks
+
+            Msg.send_messages([msg1])
+
+        Msg.push_tasks = orig_push_tasks

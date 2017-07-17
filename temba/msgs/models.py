@@ -767,11 +767,12 @@ class Msg(models.Model):
 
             tasks_to_push.append((task_msgs, task_priority))
 
-        def push_tasks(tasks):
-            for msg_task in tasks:
-                push_task(task_msgs[0]['org'], MSG_QUEUE, SEND_MSG_TASK, msg_task[0], priority=msg_task[1])
+        on_transaction_commit(lambda: cls.push_tasks(tasks_to_push))
 
-        on_transaction_commit(lambda: push_tasks(tasks_to_push))
+    @classmethod
+    def push_tasks(cls, tasks):
+        for msg_task in tasks:
+            push_task(msg_task[0][0]['org'], MSG_QUEUE, SEND_MSG_TASK, msg_task[0], priority=msg_task[1])
 
     @classmethod
     def process_message(cls, msg):
