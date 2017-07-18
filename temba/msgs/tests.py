@@ -15,7 +15,6 @@ from django.test import TransactionTestCase
 from django.contrib.auth.models import User
 from mock import patch
 from openpyxl import load_workbook
-from celery.task.base import Task
 from temba.contacts.models import Contact, ContactField, ContactURN, TEL_SCHEME, URN
 from temba.channels.models import Channel, ChannelCount, ChannelEvent, ChannelLog
 from temba.msgs.models import Msg, ExportMessagesTask, RESENT, FAILED, OUTGOING, PENDING, WIRED, DELIVERED, ERRORED
@@ -2140,12 +2139,12 @@ class CeleryTaskTest(TransactionTestCase):
 
         return Contact.get_or_create(**kwargs)
 
-    def handle_apply(self, task_class, args=None, kwargs=None, **options):
-        self.applied_tasks.append((task_class.name, tuple(args), kwargs))
+    def handle_push_task(self, task_name):
+        self.applied_tasks.append(task_name)
 
-    def assert_task_sent(self, task_class, *args, **kwargs):
-        was_sent = any(task_class == task[0] for task in self.applied_tasks)
-        self.assertTrue(was_sent, 'Task not called w/class %s and args %s' % (task_class, args))
+    def assert_task_sent(self, task_name):
+        was_sent = task_name in self.applied_tasks
+        self.assertTrue(was_sent, 'Task not called w/class %s' % (task_name))
 
     def assertInDB(self, obj, msg=None):
         """Test for obj's presence in the database."""
@@ -2157,25 +2156,26 @@ class CeleryTaskTest(TransactionTestCase):
             self.fail(fullmsg)
 
     def test_reply_task_added(self):
+        from celery import current_app
+        send_task_orig = current_app.send_task
         orig_push_tasks = Msg.push_tasks
-        task_apply_orig = Task.apply
 
         settings.CELERY_ALWAYS_EAGER = False
         settings.SEND_MESSAGES = True
 
         try:
-            def new_apply(task_class, args=None, kwargs=None, link=None, link_error=None, **options):
-                self.handle_apply(task_class, args, kwargs, **options)
+            def new_send_task(name, args=(), kwargs={}, **opts):  # pragma: needs cover
+                self.handle_push_task(name)
 
-            # monkey patch the regular apply with our method
-            Task.apply = new_apply
+            # monkey patch the regular send_task with our method
+            current_app.send_task = new_send_task
 
             @classmethod
             def new_push_tasks(cls, tasks_to_push):
                 orig_push_tasks(tasks_to_push)
 
-                self.assert_task_sent('send_msg_task')
                 self.assertInDB(msg1)
+                self.assert_task_sent('send_msg_task')
 
             Msg.push_tasks = new_push_tasks
 
@@ -2186,8 +2186,8 @@ class CeleryTaskTest(TransactionTestCase):
 
         finally:
             # Reset the monkey patch to the original method
-            Task.apply = task_apply_orig
             Msg.push_tasks = orig_push_tasks
+            current_app.send_task = send_task_orig
 
             settings.CELERY_ALWAYS_EAGER = True
             settings.SEND_MESSAGES = False
