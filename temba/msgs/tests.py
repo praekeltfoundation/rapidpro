@@ -11,10 +11,12 @@ from django.core.urlresolvers import reverse
 from django.utils import timezone
 from django_redis import get_redis_connection
 from django.db import transaction
+from django.test import TransactionTestCase
+from django.contrib.auth.models import User
 from mock import patch
 from openpyxl import load_workbook
 from celery.task.base import Task
-from temba.contacts.models import Contact, ContactField, ContactURN, TEL_SCHEME
+from temba.contacts.models import Contact, ContactField, ContactURN, TEL_SCHEME, URN
 from temba.channels.models import Channel, ChannelCount, ChannelEvent, ChannelLog
 from temba.msgs.models import Msg, ExportMessagesTask, RESENT, FAILED, OUTGOING, PENDING, WIRED, DELIVERED, ERRORED
 from temba.msgs.models import Broadcast, BroadcastRecipient, Label, SystemLabel, SystemLabelCount, UnreachableException
@@ -28,6 +30,7 @@ from temba.values.models import Value
 from .management.commands.msg_console import MessageConsole
 from .tasks import squash_labelcounts, clear_old_msg_external_ids, purge_broadcasts_task
 from .templatetags.sms import as_icon
+from temba.locations.models import AdminBoundary
 
 
 class MsgTest(TembaTest):
@@ -2074,12 +2077,24 @@ class TagsTest(TembaTest):
         self.assertRaises(ValueError, self.render_template, '{% load sms %}{% render as %}{% endrender %}')
 
 
-class CeleryTaskTest(TembaTest):
+class CeleryTaskTest(TransactionTestCase):
 
     def setUp(self):
         super(CeleryTaskTest, self).setUp()
 
         self.applied_tasks = []
+
+        self.country = AdminBoundary.objects.create(osm_id='171126', name='Rwanda', level=0)
+        self.user = self.create_user("User")
+
+        self.org = Org.objects.create(name="Temba", timezone=pytz.timezone("Africa/Kigali"), country=self.country,
+                                      brand=settings.DEFAULT_BRAND, created_by=self.user, modified_by=self.user)
+
+        self.org.initialize(topup_size=1000)
+
+        # add users to the org
+        self.user.set_org(self.org)
+        self.org.viewers.add(self.user)
 
         self.joe = self.create_contact("Joe", "+250788383444")
 
@@ -2087,6 +2102,43 @@ class CeleryTaskTest(TembaTest):
             self.org, self.user, 'RW', Channel.TYPE_JUNEBUG_USSD, None, '1234',
             config=dict(username='junebug-user', password='junebug-pass', send_url='http://example.org/'),
             uuid='00000000-0000-0000-0000-000000001234', role=Channel.ROLE_USSD)
+
+    def _fixture_teardown(self):
+        Msg.objects.all().delete()
+        Channel.objects.all().delete()
+        AdminBoundary.objects.all().delete()
+        Org.objects.all().delete()
+        Contact.objects.all().delete()
+        self.user.delete()
+
+    def create_user(self, username):
+        return User.objects.create(username=username)
+
+    def create_contact(self, name=None, number=None, twitter=None, urn=None, is_test=False, **kwargs):
+        """
+        Create a contact in the master test org
+        """
+        urns = []
+        if number:
+            urns.append(URN.from_tel(number))
+        if twitter:
+            urns.append(URN.from_twitter(twitter))
+        if urn:
+            urns.append(urn)
+
+        if not name and not urns:  # pragma: no cover
+            raise ValueError("Need a name or URN to create a contact")
+
+        kwargs['name'] = name
+        kwargs['urns'] = urns
+        kwargs['is_test'] = is_test
+
+        if 'org' not in kwargs:
+            kwargs['org'] = self.org
+        if 'user' not in kwargs:
+            kwargs['user'] = self.user
+
+        return Contact.get_or_create(**kwargs)
 
     def handle_apply(self, task_class, args=None, kwargs=None, **options):
         self.applied_tasks.append((task_class.name, tuple(args), kwargs))
@@ -2112,8 +2164,7 @@ class CeleryTaskTest(TembaTest):
         settings.SEND_MESSAGES = True
 
         try:
-            @classmethod
-            def new_apply(task_class, args=None, kwargs=None, **options):
+            def new_apply(task_class, args=None, kwargs=None, link=None, link_error=None, **options):
                 self.handle_apply(task_class, args, kwargs, **options)
 
             # monkey patch the regular apply with our method
@@ -2132,6 +2183,7 @@ class CeleryTaskTest(TembaTest):
                 msg1 = Msg.create_outgoing(self.org, self.user, self.joe, "Hello, we heard from you.", channel=self.channel)
 
                 Msg.send_messages([msg1])
+
         finally:
             # Reset the monkey patch to the original method
             Task.apply = task_apply_orig
