@@ -9148,8 +9148,6 @@ class JunebugTest(JunebugTestMixin, TembaTest):
         msg.external_id = data['message_id']
         msg.save(update_fields=('external_id',))
 
-        # data['id'] = msg.external_id
-
         def assertStatus(sms, event_type, assert_status):
             data['event_type'] = event_type
             response = self.client.post(
