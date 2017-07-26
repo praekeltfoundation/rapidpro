@@ -202,6 +202,8 @@
 .modal-footer
   .ussd-counter{ng-class:"{limit: characters < 0}", ng-if:'formData.rulesetConfig.type == "wait_menu" || formData.rulesetConfig.type == "wait_ussd"'}
     [[characters]] characters remaining
+    %span{ng-if:'characters < 0', ng-style:'{"color": "#e74c3c"}'}
+      Text too long.
 
   .timeout{ng-show:'flow.type == "F" && isPausingRuleset()', style:'float:left'}
 
@@ -218,5 +220,5 @@
   <!--[[splitEditor]]-->
   %button{ng-click:"cancel()",class:"btn btn-secondary"}
     -trans "Cancel"
-  %button{ng-disabled:'variable.$invalid || (hasRules() && ruleForm.$invalid) || splitEditor.$invalid || (characters && characters < 0)',ng-click:"okRules(splitEditor)",class:"btn btn-primary"}
+  %button{ng-disabled:'variable.$invalid || (hasRules() && ruleForm.$invalid) || splitEditor.$invalid || (characters && characters < 0 && !ussd)',ng-click:"okRules(splitEditor)",class:"btn btn-primary"}
     -trans "Ok"
