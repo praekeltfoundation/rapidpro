@@ -738,8 +738,6 @@ class Msg(models.Model):
         task_priority = None
         last_contact = None
 
-        tasks_to_push = []
-
         # we send in chunks of 1,000 to help with contention
         for msg_chunk in chunk_list(all_msgs, 1000):
             # create a temporary list of our chunk so we can iterate more than once
