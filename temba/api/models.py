@@ -23,7 +23,7 @@ from temba.channels.models import Channel, ChannelEvent, TEMBA_HEADERS
 from temba.contacts.models import TEL_SCHEME
 from temba.flows.models import FlowRun, ActionLog
 from temba.orgs.models import Org
-from temba.utils import datetime_to_str, prepped_request_to_str
+from temba.utils import datetime_to_str, prepped_request_to_str, on_transaction_commit
 from temba.utils.cache import get_cacheable_attr
 from urllib import urlencode
 
@@ -208,10 +208,10 @@ class WebHookEvent(SmartModel):
     def fire(self):
         # start our task with this event id
         from .tasks import deliver_event_task
-        deliver_event_task.delay(self.id)
+        on_transaction_commit(lambda: deliver_event_task.delay(self.id))
 
     @classmethod
-    def trigger_flow_event(cls, run, webhook_url, node_uuid, msg, action='POST', resthook=None):
+    def trigger_flow_event(cls, run, webhook_url, node_uuid, msg, action='POST', resthook=None, header=None):
         flow = run.flow
         org = flow.org
         contact = run.contact
@@ -230,12 +230,14 @@ class WebHookEvent(SmartModel):
 
         if msg:
             text = msg.text
+            attachments = msg.get_attachments()
             channel = msg.channel
             contact_urn = msg.contact_urn
         else:
             # if the action is on the first node we might not have an sms (or channel) yet
             channel = None
             text = None
+            attachments = []
             contact_urn = contact.get_urn()
 
         steps = []
@@ -256,6 +258,7 @@ class WebHookEvent(SmartModel):
                     flow_base_language=flow.base_language,
                     run=run.id,
                     text=text,
+                    attachments=[a.url for a in attachments],
                     step=six.text_type(node_uuid),
                     phone=contact.get_urn_display(org=org, scheme=TEL_SCHEME, formatted=False),
                     contact=contact.uuid,
@@ -263,7 +266,8 @@ class WebHookEvent(SmartModel):
                     urn=six.text_type(contact_urn),
                     values=json.dumps(values),
                     steps=json.dumps(steps),
-                    time=json_time)
+                    time=json_time,
+                    header=header)
 
         if not action:  # pragma: needs cover
             action = 'POST'
@@ -287,11 +291,16 @@ class WebHookEvent(SmartModel):
             # only send webhooks when we are configured to, otherwise fail
             if settings.SEND_WEBHOOKS:
 
+                requests_headers = TEMBA_HEADERS
+
+                if header:
+                    requests_headers.update(header)
+
                 # some hosts deny generic user agents, use Temba as our user agent
                 if action == 'GET':
-                    response = requests.get(webhook_url, headers=TEMBA_HEADERS, timeout=10)
+                    response = requests.get(webhook_url, headers=requests_headers, timeout=10)
                 else:
-                    response = requests.post(webhook_url, data=data, headers=TEMBA_HEADERS, timeout=10)
+                    response = requests.post(webhook_url, data=data, headers=requests_headers, timeout=10)
 
                 body = response.text
                 if body:
@@ -372,12 +381,13 @@ class WebHookEvent(SmartModel):
         api_user = get_api_user()
 
         json_time = time.strftime('%Y-%m-%dT%H:%M:%S.%f')
-        data = dict(sms=msg.pk,
+        data = dict(sms=msg.id,
                     phone=msg.contact.get_urn_display(org=org, scheme=TEL_SCHEME, formatted=False),
                     contact=msg.contact.uuid,
                     contact_name=msg.contact.name,
                     urn=six.text_type(msg.contact_urn),
                     text=msg.text,
+                    attachments=[a.url for a in msg.get_attachments()],
                     time=json_time,
                     status=msg.status,
                     direction=msg.direction)

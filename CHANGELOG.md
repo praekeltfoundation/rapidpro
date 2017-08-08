@@ -1,3 +1,149 @@
+v3.0.171
+----------
+ * Fixes for Twitter Activity channels
+ * Add stop contact command to mage handler
+ * Convert Firebase Cloud Messaging to a dynamic channel type
+ * Convert Viber Public to a dynamic channel type
+ * Change to the correct way for dynamic channel
+ * Convert LINE to a dynamic channel type
+ * Better message in SMS alert email
+
+v3.0.170
+----------
+ * Hide SMTP config password and do not change the set password if blank is submitted
+ * Validate the length of message campaigns for better user feedback
+ * Make FlowRun.uuid unique and non-null (advise faking this and building index concurrently)
+
+v3.0.169
+----------
+ * Migration to populate FlowRun.uuid. Advise faking this and running manually.
+ * More channel logs for Jiochat channel interactions
+
+v3.0.167
+----------
+ * Fix inclusion of attachment urls in webhook payloads and add tests
+ * Install lxml to improve performance of large Excel exports
+ * Add proper deactivation of Telegram channels
+ * Converted Facebook and Telegram to dynamic channel types
+ * Add nullable uuid field to FlowRun
+ * Make sure we consider all URN schemes we can send to when looking up the if we have a send channel
+ * Split Twitter and Twitter Beta into separate channel types
+ * Remove support for old-style Twilio endpoints
+
+v3.0.166
+----------
+ * Release channels before Twilio/Nexmo configs are cleared
+ * Expose flow start UUID on runs from the runs endpoint
+
+v3.0.165
+----------
+ * Migration to populate FlowStart.uuid on existing objects (advise faking and run manually)
+
+v3.0.163
+----------
+ * Add uuid field to FlowStart
+ * Migration to convert TwiML apps
+
+v3.0.160
+----------
+ * Add support for Twitter channels using new beta Activity API
+
+v3.0.159
+----------
+ * Clean incoming message text to remove invalid chars
+
+v3.0.158
+----------
+ * Add more exception currencies for pycountry
+ * Support channel specific Twilio endpoints
+
+v3.0.156
+----------
+ * Clean up pip-requires and reset pip-freeze
+
+v3.0.155
+----------
+ * Reduce the rate limit for SMS central to 1 requests per second
+ * Display Jiochat on channel claim page
+ * Fix date pickers on modal forms
+ * Update channels to generate messages with multiple attachments
+
+v3.0.154
+----------
+ * Rate limit sending throught SMS central to 10 messages per second
+ * Fix some more uses of Context objects no longer supported in django 1.11
+ * Fix channel log list request time display
+ * Add @step.text and @step.attachments to message context
+
+v3.0.153
+----------
+ * Jiochat channels
+ * Django 1.11
+
+v3.0.151
+----------
+ * Convert all squashable and prunable models to use big primary keys
+
+v3.0.150
+----------
+ * Drop database-level length restrictions on msg and values
+ * Add sender ID config for Macrokiosk channels
+ * Expose org credit information on API org endpoint
+ * Add contact_uuid parameter to update FCM user
+ * Add configurable webhook header fields
+
+v3.0.148
+----------
+* Fix simulator with attachments
+* Switch to using new recent messages model
+
+v3.0.147
+----------
+ * Migration to populate FlowPathRecentMessage
+ * Clip messages to 640 chars for recent messages table
+
+v3.0.145
+----------
+ * Change Macrokiosk time format to not have space
+ * Better error message for external channel handler for wrong time format
+ * Add new model for tracking recent messages on flow path segments
+
+v3.0.144
+----------
+ * Remove Msg.media field that was replaced by Msg.attachments
+ * Change default ivr timeouts to 2m
+ * Fix the content-type for Twilio call response
+
+v3.0.143
+----------
+ * Update contact read page and inbox views to show multiple message attachments 
+ * Fix use of videojs to provide consistent video playback across browsers
+ * API should return error message if user provides something unparseable for a non-serializer param
+
+v3.0.142
+----------
+ * Fix handling of old msg structs with no attachments attribute
+ * Tweak in create_outgoing to prevent possible NPEs in flow execution
+ * Switch to using Msg.attachments instead of Msg.media
+ * Replace index on Value.string_value with one that is limited to first 32 chars
+
+v3.0.139
+----------
+* Fix Macrokiosk JSON responses
+
+v3.0.138
+----------
+ * Migration to populate attachments field on old messages
+
+v3.0.137
+----------
+ * Don't assume event fires still exist in process_fire_events
+ * Add new Msg.attachments field to hold multiple attachments on an incoming message
+
+v3.0.136
+----------
+ * Fix scheduled broadcast text display
+
 v3.0.135
 ----------
  * Make 'only' keyword triggers ignore punctuation

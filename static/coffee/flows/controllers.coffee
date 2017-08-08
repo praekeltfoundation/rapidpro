@@ -600,7 +600,7 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
 
     # if our warning is already visible, go ahead and delete
     if removeWarning.is(':visible')
-      Flow.removeRuleset(ruleset)
+      Flow.removeRuleset(ruleset.uuid)
 
     # otherwise warn the user first
     else
@@ -836,7 +836,7 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
 TranslateRulesController = ($scope, $modalInstance, Flow, utils, languages, ruleset, translation) ->
 
   $scope.translation = translation
-  
+
   # clone our ruleset
   ruleset = utils.clone(ruleset)
 
@@ -1044,11 +1044,48 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
       formData.timeout = option
 
   formData.webhook_action = 'GET'
+  $scope.webhook_headers_name = []
+  $scope.webhook_headers_value = []
+
   if ruleset.config
     formData.webhook = ruleset.config.webhook
     formData.webhook_action = ruleset.config.webhook_action
+    formData.webhook_headers = ruleset.config.webhook_headers or []
+    formData.isWebhookAdditionalOptionsVisible = formData.webhook_headers.length > 0
+
+    item_counter = 0
+    for item in formData.webhook_headers
+      $scope.webhook_headers_name[item_counter] = item.name
+      $scope.webhook_headers_value[item_counter] = item.value
+      item_counter++
+  else
+    formData.webhook_headers = []
+    formData.isWebhookAdditionalOptionsVisible = false
 
   formData.rulesetConfig = Flow.getRulesetConfig({type:ruleset.ruleset_type})
+
+  $scope.webhookAdditionalOptions = () ->
+    if formData.isWebhookAdditionalOptionsVisible == true
+      formData.isWebhookAdditionalOptionsVisible = false
+    else
+      formData.isWebhookAdditionalOptionsVisible = true
+
+    if formData.webhook_headers.length == 0
+      $scope.addNewWebhookHeader()
+
+  $scope.addNewWebhookHeader = () ->
+    if formData.webhook_headers == undefined
+      formData.webhook_headers = []
+
+    formData.webhook_headers.push({name: '', value: ''})
+
+  $scope.removeWebhookHeader = (index) ->
+    formData.webhook_headers.splice(index, 1)
+    $scope.webhook_headers_name.splice(index, 1)
+    $scope.webhook_headers_value.splice(index, 1)
+
+    if formData.webhook_headers.length == 0
+      $scope.addNewWebhookHeader()
 
   $scope.updateActionForm = (config) ->
 
@@ -1604,6 +1641,7 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
       flow = formData.flow
 
       # save whatever ruleset type they are setting us to
+      changedRulesetType = ruleset.ruleset_type != rulesetConfig.type
       ruleset.ruleset_type = rulesetConfig.type
 
       if rulesetConfig.type == 'subflow'
@@ -1637,9 +1675,21 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
         ruleset.config = {'resthook': splitEditor.resthook.selected[0]['id']}
 
       else if rulesetConfig.type == 'webhook'
+        webhook_headers = []
+
+        item_counter = 0
+        if formData.webhook_headers
+          for item in formData.webhook_headers
+            item_name = if $scope.webhook_headers_name.length > 0 then $scope.webhook_headers_name[item_counter] else null
+            item_value = if $scope.webhook_headers_value.length > 0 then $scope.webhook_headers_value[item_counter] else null
+            if item_name and item_value
+              webhook_headers.push({name: item_name, value: item_value})
+            item_counter++
+
         ruleset.config =
           webhook: formData.webhook
           webhook_action: formData.webhook_action
+          webhook_headers: webhook_headers
 
       # update our operand if they selected a contact field explicitly
       else if rulesetConfig.type == 'contact_field'
@@ -1664,6 +1714,14 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
       if ruleset._switchedFromAction
         Flow.removeActionSet($scope.actionset)
 
+      # if the ruleset type changed, we should remove old one and create a new one
+      if changedRulesetType
+        connections = Plumb.getConnectionMap({ target: ruleset.uuid })
+        Flow.removeRuleset(ruleset.uuid)
+        ruleset.uuid = uuid()
+        for rule in ruleset.rules
+          rule.uuid = uuid()
+
       # save our new ruleset
       Flow.replaceRuleset(ruleset, false)
 
@@ -1673,7 +1731,7 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
           Flow.updateDestination($scope.ruleset.uuid + '_' + rule.uuid, null)
 
       # steal the old connections if we are replacing an actionset with ourselves
-      if ruleset._switchedFromAction
+      if ruleset._switchedFromAction or changedRulesetType
         $timeout ->
           ruleset_uuid = ruleset.uuid
           for source of connections
@@ -1709,8 +1767,44 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
   #-----------------------------------------------------------------
   # Actions editor
   #-----------------------------------------------------------------
-
   $scope.action = utils.clone(action)
+  $scope.action_webhook_headers_name = []
+  $scope.action_webhook_headers_value = []
+
+  if $scope.action.webhook_headers
+    item_counter = 0
+    for item in $scope.action.webhook_headers
+      $scope.action_webhook_headers_name[item_counter] = item.name
+      $scope.action_webhook_headers_value[item_counter] = item.value
+      item_counter++
+  else
+    $scope.action.webhook_headers = []
+
+  formData.isActionWebhookAdditionalOptionsVisible = $scope.action.webhook_headers.length > 0
+
+  $scope.actionWebhookAdditionalOptions = () ->
+    if formData.isActionWebhookAdditionalOptionsVisible == true
+      formData.isActionWebhookAdditionalOptionsVisible = false
+    else
+      formData.isActionWebhookAdditionalOptionsVisible = true
+
+    if $scope.action.webhook_headers.length == 0
+      $scope.addNewActionWebhookHeader()
+
+  $scope.addNewActionWebhookHeader = () ->
+    if !$scope.action.webhook_headers
+      $scope.action.webhook_headers = []
+
+    $scope.action.webhook_headers.push({name: '', value: ''})
+
+  $scope.removeActionWebhookHeader = (index) ->
+    $scope.action.webhook_headers.splice(index, 1)
+    $scope.action_webhook_headers_name.splice(index, 1)
+    $scope.action_webhook_headers_value.splice(index, 1)
+
+    if $scope.action.webhook_headers.length == 0
+      $scope.addNewActionWebhookHeader()
+
   $scope.actionset = actionset
   $scope.flowId = window.flowId
 
@@ -1879,6 +1973,18 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
     $scope.action.type = 'api'
     $scope.action.action = method
     $scope.action.webhook = url
+
+    webhook_headers = []
+    item_counter = 0
+    for item in $scope.action.webhook_headers
+      item_name = if $scope.action_webhook_headers_name then $scope.action_webhook_headers_name[item_counter] else null
+      item_value = if $scope.action_webhook_headers_value then $scope.action_webhook_headers_value[item_counter] else null
+      if item_name and item_value
+        webhook_headers.push({name: item_name, value: item_value})
+      item_counter++
+
+    $scope.action.webhook_headers = webhook_headers
+
     Flow.saveAction(actionset, $scope.action)
     $modalInstance.close()
 
@@ -1918,7 +2024,7 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
       $scope.action.type = 'flow'
 
     flow = flow[0]
-    $scope.action.flow = 
+    $scope.action.flow =
       uuid: flow.id
       name: flow.text
 
@@ -1959,15 +2065,11 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
     # switching from a ruleset means removing it and hijacking its connections
     if actionset._switchedFromRule
       connections = Plumb.getConnectionMap({ target: $scope.ruleset.uuid })
-      Flow.removeRuleset($scope.ruleset)
+      Flow.removeRuleset($scope.ruleset.uuid)
 
       $timeout ->
         for source of connections
-          # only rules can go to us, actions cant connect to actions
-          if source.split('_').length > 1
-            Flow.updateDestination(source, actionset.uuid)
-          else
-            Flow.updateDestination(source, null)
+          Flow.updateDestination(source, actionset.uuid)
       ,0
 
   $scope.cancel = ->

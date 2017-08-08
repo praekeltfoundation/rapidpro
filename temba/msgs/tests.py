@@ -11,15 +11,15 @@ from django.core.urlresolvers import reverse
 from django.utils import timezone
 from django_redis import get_redis_connection
 from django.db import transaction
-from django.test import TransactionTestCase
 from django.contrib.auth.models import User
+from django.test import override_settings
 from mock import patch
 from openpyxl import load_workbook
-from temba.contacts.models import Contact, ContactField, ContactURN, TEL_SCHEME, URN
+from temba.contacts.models import Contact, ContactField, ContactURN, TEL_SCHEME
 from temba.channels.models import Channel, ChannelCount, ChannelEvent, ChannelLog
 from temba.msgs.models import Msg, ExportMessagesTask, RESENT, FAILED, OUTGOING, PENDING, WIRED, DELIVERED, ERRORED
 from temba.msgs.models import Broadcast, BroadcastRecipient, Label, SystemLabel, SystemLabelCount, UnreachableException
-from temba.msgs.models import HANDLED, QUEUED, SENT, INCOMING, INBOX, FLOW
+from temba.msgs.models import Attachment, HANDLED, QUEUED, SENT, INCOMING, INBOX, FLOW
 from temba.orgs.models import Language, Debit, Org
 from temba.schedules.models import Schedule
 from temba.tests import TembaTest, AnonymousOrg
@@ -30,6 +30,8 @@ from .management.commands.msg_console import MessageConsole
 from .tasks import squash_labelcounts, clear_old_msg_external_ids, purge_broadcasts_task
 from .templatetags.sms import as_icon
 from temba.locations.models import AdminBoundary
+from temba.msgs import models
+from temba.utils.queues import DEFAULT_PRIORITY
 
 
 class MsgTest(TembaTest):
@@ -331,6 +333,10 @@ class MsgTest(TembaTest):
         self.client.get(reverse('msgs.msg_inbox'))
 
         self.assertEqual(Msg.get_unread_msg_count(self.admin), 3)
+
+        # test that invalid chars are stripped from message text
+        msg5 = Msg.create_incoming(self.channel, "tel:250788382382", "Don't be null!\x00")
+        self.assertEqual(msg5.text, "Don't be null!")
 
     def test_empty(self):
         broadcast = Broadcast.create(self.org, self.admin, "If a broadcast is sent and nobody receives it, does it still send?", [])
@@ -699,7 +705,7 @@ class MsgTest(TembaTest):
 
         # inbound message with media attached, such as an ivr recording
         msg5 = self.create_msg(contact=self.joe, text="Media message", direction='I', status=HANDLED,
-                               msg_type='I', media='audio:http://rapidpro.io/audio/sound.mp3',
+                               msg_type='I', attachments=['audio:http://rapidpro.io/audio/sound.mp3'],
                                created_on=datetime(2017, 1, 5, 10, tzinfo=pytz.UTC))
 
         # create some outbound messages with different statuses
@@ -712,8 +718,7 @@ class MsgTest(TembaTest):
         msg9 = self.create_msg(contact=self.joe, text="Hey out 9", direction='O', status=FAILED,
                                created_on=datetime(2017, 1, 9, 10, tzinfo=pytz.UTC))
 
-        self.assertTrue(msg5.is_media_type_audio())
-        self.assertEqual('http://rapidpro.io/audio/sound.mp3', msg5.get_media_path())
+        self.assertEqual(msg5.get_attachments(), [Attachment('audio', 'http://rapidpro.io/audio/sound.mp3')])
 
         # label first message
         folder = Label.get_or_create_folder(self.org, self.user, "Folder")
@@ -799,6 +804,11 @@ class MsgTest(TembaTest):
             [msg6.created_on, "123", "tel", "Joe Blow", msg6.contact.uuid, "Outgoing", "Hey out 6", "", "Sent"],
             [msg5.created_on, "123", "tel", "Joe Blow", msg5.contact.uuid, "Incoming", "Media message", "", "Handled"],
         ], self.org.timezone)
+
+        # check sending an invalid date
+        response = self.client.post(reverse('msgs.msg_export') + '?l=I', {'export_all': 1, 'start_date': 'xyz'})
+        self.assertEqual(response.status_code, 200)
+        self.assertFormError(response, 'form', 'start_date', "Enter a valid date.")
 
         # test as anon org to check that URNs don't end up in exports
         with AnonymousOrg(self.org):
@@ -981,7 +991,7 @@ class BroadcastTest(TembaTest):
     def test_send(self):
         # remove all channels first
         for channel in Channel.objects.all():
-            channel.release(notify_mage=False)
+            channel.release()
 
         send_url = reverse('msgs.broadcast_send')
         self.login(self.admin)
@@ -1028,7 +1038,7 @@ class BroadcastTest(TembaTest):
 
         # test with one channel now
         for channel in Channel.objects.all():
-            channel.release(notify_mage=False)
+            channel.release()
 
         Channel.create(self.org, self.user, None, 'A', None, secret="12345", gcm_id="123")
 
@@ -1099,7 +1109,7 @@ class BroadcastTest(TembaTest):
         self.assertTrue(msgs[0].contact, twitter_contact)
 
         # remove twitter relayer
-        self.twitter.release(trigger_sync=False, notify_mage=False)
+        self.twitter.release(trigger_sync=False)
 
         # send another broadcast to all
         broadcast = Broadcast.create(self.org, self.admin, "Want to go thrift shopping?", recipients)
@@ -1237,12 +1247,33 @@ class BroadcastTest(TembaTest):
 
         self.assertEqual(context['__default__'], "keyword remainder-remainder")
         self.assertEqual(context['value'], "keyword remainder-remainder")
+        self.assertEqual(context['text'], "keyword remainder-remainder")
+        self.assertEqual(context['attachments'], {})
         self.assertEqual(context['contact']['__default__'], "Joe Blow")
         self.assertEqual(context['contact']['superhero_name'], "batman")
 
         # time should be in org format and timezone
-        msg_time = datetime_to_str(msg.created_on, '%d-%m-%Y %H:%M', tz=self.org.timezone)
-        self.assertEqual(msg_time, context['time'])
+        self.assertEqual(context['time'], datetime_to_str(msg.created_on, '%d-%m-%Y %H:%M', tz=self.org.timezone))
+
+        # add some attachments to this message
+        msg.attachments = ["image/jpeg:http://e.com/test.jpg", "audio/mp3:http://e.com/test.mp3"]
+        msg.save()
+        context = msg.build_expressions_context()
+
+        self.assertEqual(context['__default__'], "keyword remainder-remainder\nhttp://e.com/test.jpg\nhttp://e.com/test.mp3")
+        self.assertEqual(context['value'], "keyword remainder-remainder\nhttp://e.com/test.jpg\nhttp://e.com/test.mp3")
+        self.assertEqual(context['text'], "keyword remainder-remainder")
+        self.assertEqual(context['attachments'], {"0": "http://e.com/test.jpg", "1": "http://e.com/test.mp3"})
+
+        # clear the text of the message
+        msg.text = ""
+        msg.save()
+        context = msg.build_expressions_context()
+
+        self.assertEqual(context['__default__'], "http://e.com/test.jpg\nhttp://e.com/test.mp3")
+        self.assertEqual(context['value'], "http://e.com/test.jpg\nhttp://e.com/test.mp3")
+        self.assertEqual(context['text'], "")
+        self.assertEqual(context['attachments'], {"0": "http://e.com/test.jpg", "1": "http://e.com/test.mp3"})
 
     def test_variables_substitution(self):
         ContactField.get_or_create(self.org, self.admin, "sector", "sector")
@@ -1809,7 +1840,7 @@ class ConsoleTest(TembaTest):
         self.john = self.create_contact("John Doe", "0788123123")
 
         # create a flow and set "color" as its trigger
-        self.flow = self.create_flow()
+        self.flow = self.create_flow(definition=self.COLOR_FLOW_DEFINITION)
         Trigger.objects.create(flow=self.flow, keyword="color", created_by=self.admin, modified_by=self.admin, org=self.org)
 
     def assertEchoed(self, needle, clear=True):
@@ -1923,15 +1954,19 @@ class BroadcastLanguageTest(TembaTest):
         greg_media = Msg.objects.filter(contact=self.greg).order_by('-created_on').first()
         wilbert_media = Msg.objects.filter(contact=self.wilbert).order_by('-created_on').first()
 
+        francois_media_url = "image/jpeg:https://%s/%s" % (settings.AWS_BUCKET_DOMAIN, fre_attachment.split(':', 1)[1])
+        greg_media_url = "image/jpeg:https://%s/%s" % (settings.AWS_BUCKET_DOMAIN, eng_attachment.split(':', 1)[1])
+        wilbert_media_url = "image/jpeg:https://%s/%s" % (settings.AWS_BUCKET_DOMAIN, fre_attachment.split(':', 1)[1])
+
         # assert the right language was used for each contact on both text and media
-        self.assertEquals(fre_msg, francois_media.text)
-        self.assertEquals("image/jpeg:https://%s/%s" % (settings.AWS_BUCKET_DOMAIN, fre_attachment.split(':', 1)[1]), francois_media.media)
+        self.assertEqual(francois_media.text, fre_msg)
+        self.assertEqual(francois_media.attachments, [francois_media_url])
 
-        self.assertEquals(eng_msg, greg_media.text)
-        self.assertEquals("image/jpeg:https://%s/%s" % (settings.AWS_BUCKET_DOMAIN, eng_attachment.split(':', 1)[1]), greg_media.media)
+        self.assertEqual(greg_media.text, eng_msg)
+        self.assertEqual(greg_media.attachments, [greg_media_url])
 
-        self.assertEquals(fre_msg, wilbert_media.text)
-        self.assertEquals("image/jpeg:https://%s/%s" % (settings.AWS_BUCKET_DOMAIN, fre_attachment.split(':', 1)[1]), wilbert_media.media)
+        self.assertEqual(wilbert_media.text, fre_msg)
+        self.assertEqual(wilbert_media.attachments, [wilbert_media_url])
 
 
 class SystemLabelTest(TembaTest):
@@ -2076,28 +2111,16 @@ class TagsTest(TembaTest):
         self.assertRaises(ValueError, self.render_template, '{% load sms %}{% render as %}{% endrender %}')
 
 
-class CeleryTaskTest(TransactionTestCase):
+class CeleryTaskTest(TembaTest):
 
     def setUp(self):
         super(CeleryTaskTest, self).setUp()
 
         self.applied_tasks = []
 
-        self.country = AdminBoundary.objects.create(osm_id='171126', name='Rwanda', level=0)
-        self.user = self.create_user("User")
-
-        self.org = Org.objects.create(name="Temba", timezone=pytz.timezone("Africa/Kigali"), country=self.country,
-                                      brand=settings.DEFAULT_BRAND, created_by=self.user, modified_by=self.user)
-
-        self.org.initialize(topup_size=1000)
-
-        # add users to the org
-        self.user.set_org(self.org)
-        self.org.viewers.add(self.user)
-
         self.joe = self.create_contact("Joe", "+250788383444")
 
-        self.channel = Channel.create(
+        self.channel2 = Channel.create(
             self.org, self.user, 'RW', Channel.TYPE_JUNEBUG_USSD, None, '1234',
             config=dict(username='junebug-user', password='junebug-pass', send_url='http://example.org/'),
             uuid='00000000-0000-0000-0000-000000001234', role=Channel.ROLE_USSD)
@@ -2108,36 +2131,15 @@ class CeleryTaskTest(TransactionTestCase):
         AdminBoundary.objects.all().delete()
         Org.objects.all().delete()
         Contact.objects.all().delete()
-        self.user.delete()
+        User.objects.all().exclude(username=settings.ANONYMOUS_USER_NAME).delete()
 
-    def create_user(self, username):
-        return User.objects.create(username=username)
+    @classmethod
+    def _enter_atomics(cls):
+        return {}
 
-    def create_contact(self, name=None, number=None, twitter=None, urn=None, is_test=False, **kwargs):
-        """
-        Create a contact in the master test org
-        """
-        urns = []
-        if number:
-            urns.append(URN.from_tel(number))
-        if twitter:
-            urns.append(URN.from_twitter(twitter))
-        if urn:
-            urns.append(urn)
-
-        if not name and not urns:  # pragma: no cover
-            raise ValueError("Need a name or URN to create a contact")
-
-        kwargs['name'] = name
-        kwargs['urns'] = urns
-        kwargs['is_test'] = is_test
-
-        if 'org' not in kwargs:
-            kwargs['org'] = self.org
-        if 'user' not in kwargs:
-            kwargs['user'] = self.user
-
-        return Contact.get_or_create(**kwargs)
+    @classmethod
+    def _rollback_atomics(cls, atomics):
+        pass
 
     def handle_push_task(self, task_name):
         self.applied_tasks.append(task_name)
@@ -2155,39 +2157,20 @@ class CeleryTaskTest(TransactionTestCase):
         except obj.DoesNotExist:
             self.fail(fullmsg)
 
+    @override_settings(CELERY_ALWAYS_EAGER=False, SEND_MESSAGES=True)
     def test_reply_task_added(self):
-        from celery import current_app
-        send_task_orig = current_app.send_task
-        orig_push_tasks = Msg.push_tasks
+        orig_push_task = models.push_task
 
-        settings.CELERY_ALWAYS_EAGER = False
-        settings.SEND_MESSAGES = True
+        def new_send_task(name, args=(), kwargs={}, **opts):
+            self.handle_push_task(name)
 
-        try:
-            def new_send_task(name, args=(), kwargs={}, **opts):  # pragma: needs cover
-                self.handle_push_task(name)
+        def new_push_task(org, queue, task_name, args, priority=DEFAULT_PRIORITY):
+            orig_push_task(org, queue, task_name, args, priority=DEFAULT_PRIORITY)
 
-            # monkey patch the regular send_task with our method
-            current_app.send_task = new_send_task
+            self.assertInDB(msg1)
+            self.assert_task_sent('send_msg_task')
 
-            @classmethod
-            def new_push_tasks(cls, tasks_to_push):
-                orig_push_tasks(tasks_to_push)
+        with patch('celery.current_app.send_task', new_send_task), patch('temba.msgs.models.push_task', new_push_task), transaction.atomic():
+            msg1 = Msg.create_outgoing(self.org, self.user, self.joe, "Hello, we heard from you.", channel=self.channel2)
 
-                self.assertInDB(msg1)
-                self.assert_task_sent('send_msg_task')
-
-            Msg.push_tasks = new_push_tasks
-
-            with transaction.atomic():
-                msg1 = Msg.create_outgoing(self.org, self.user, self.joe, "Hello, we heard from you.", channel=self.channel)
-
-                Msg.send_messages([msg1])
-
-        finally:
-            # Reset the monkey patch to the original method
-            Msg.push_tasks = orig_push_tasks
-            current_app.send_task = send_task_orig
-
-            settings.CELERY_ALWAYS_EAGER = True
-            settings.SEND_MESSAGES = False
+            Msg.send_messages([msg1])
