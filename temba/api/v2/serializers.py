@@ -109,7 +109,7 @@ class BroadcastReadSerializer(ReadSerializer):
 
 
 class BroadcastWriteSerializer(WriteSerializer):
-    text = fields.TranslatableField(required=True, max_length=Msg.MAX_SIZE)
+    text = fields.TranslatableField(required=True, max_length=Msg.MAX_TEXT_LEN)
     urns = fields.URNListField(required=False)
     contacts = fields.ContactField(many=True, required=False)
     groups = fields.ContactGroupField(many=True, required=False)
@@ -222,7 +222,7 @@ class CampaignEventWriteSerializer(WriteSerializer):
     unit = serializers.ChoiceField(required=True, choices=UNITS.keys())
     delivery_hour = serializers.IntegerField(required=True, min_value=-1, max_value=23)
     relative_to = fields.ContactFieldField(required=True)
-    message = fields.TranslatableField(required=False, max_length=Msg.MAX_SIZE)
+    message = fields.TranslatableField(required=False, max_length=Msg.MAX_TEXT_LEN)
     flow = fields.FlowField(required=False)
 
     def validate_unit(self, value):
@@ -639,9 +639,13 @@ class FlowRunReadSerializer(ReadSerializer):
 
     flow = fields.FlowField()
     contact = fields.ContactField()
+    start = serializers.SerializerMethodField()
     path = serializers.SerializerMethodField()
     values = serializers.SerializerMethodField()
     exit_type = serializers.SerializerMethodField()
+
+    def get_start(self, obj):
+        return {'uuid': str(obj.start.uuid)} if obj.start else None
 
     def get_path(self, obj):
         return [{'node': s.step_uuid, 'time': format_datetime(s.arrived_on)} for s in obj.steps.all()]
@@ -663,7 +667,7 @@ class FlowRunReadSerializer(ReadSerializer):
 
     class Meta:
         model = FlowRun
-        fields = ('id', 'flow', 'contact', 'responded', 'path', 'values',
+        fields = ('id', 'flow', 'contact', 'start', 'responded', 'path', 'values',
                   'created_on', 'modified_on', 'exited_on', 'exit_type')
 
 
@@ -692,7 +696,7 @@ class FlowStartReadSerializer(ReadSerializer):
 
     class Meta:
         model = FlowStart
-        fields = ('id', 'flow', 'status', 'groups', 'contacts', 'restart_participants', 'extra', 'created_on', 'modified_on')
+        fields = ('id', 'uuid', 'flow', 'status', 'groups', 'contacts', 'restart_participants', 'extra', 'created_on', 'modified_on')
 
 
 class FlowStartWriteSerializer(WriteSerializer):
@@ -787,11 +791,12 @@ class MsgReadSerializer(ReadSerializer):
     channel = fields.ChannelField()
     direction = serializers.SerializerMethodField()
     type = serializers.SerializerMethodField()
-    media = serializers.SerializerMethodField()
+    attachments = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
     archived = serializers.SerializerMethodField()
     visibility = serializers.SerializerMethodField()
     labels = fields.LabelField(many=True)
+    media = serializers.SerializerMethodField()  # deprecated
 
     def get_broadcast(self, obj):
         return obj.broadcast_id
@@ -806,8 +811,11 @@ class MsgReadSerializer(ReadSerializer):
         # PENDING and QUEUED are same as far as users are concerned
         return self.STATUSES.get(QUEUED if obj.status == PENDING else obj.status)
 
+    def get_attachments(self, obj):
+        return [a.as_json() for a in obj.get_attachments()]
+
     def get_media(self, obj):
-        return obj.media
+        return obj.attachments[0] if obj.attachments else None
 
     def get_archived(self, obj):
         return obj.visibility == Msg.VISIBILITY_ARCHIVED
@@ -819,7 +827,7 @@ class MsgReadSerializer(ReadSerializer):
         model = Msg
         fields = ('id', 'broadcast', 'contact', 'urn', 'channel',
                   'direction', 'type', 'status', 'archived', 'visibility', 'text', 'labels',
-                  'media', 'created_on', 'sent_on', 'modified_on')
+                  'attachments', 'created_on', 'sent_on', 'modified_on', 'media')
 
 
 class MsgBulkActionSerializer(WriteSerializer):
