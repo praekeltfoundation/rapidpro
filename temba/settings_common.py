@@ -1257,3 +1257,5 @@ MSG_FIELD_SIZE = 640
 # -----------------------------------------------------------------------------------
 SUCCESS_LOGS_TRIM_TIME = 48
 ALL_LOGS_TRIM_TIME = 24 * 30
+
+TRANSFERTO_AIRTIME_API_URL = os.environ.get('TRANSFERTO_AIRTIME_API_URL', 'https://airtime.transferto.com/cgi-bin/shop/topup')

@@ -16,7 +16,7 @@ from temba.utils import get_country_code_by_name
 
 
 class AirtimeTransfer(SmartModel):
-    TRANSFERTO_AIRTIME_API_URL = 'https://fm.transfer-to.com/cgi-bin/shop/topup'
+    TRANSFERTO_AIRTIME_API_URL = settings.TRANSFERTO_AIRTIME_API_URL
     LOG_DIVIDER = "\n\n%s\n\n" % ('=' * 20)
 
     PENDING = 'P'
