@@ -7,6 +7,7 @@ import json
 import pytz
 import requests
 import six
+import time
 import magic
 import xml.etree.ElementTree as ET
 
@@ -2079,8 +2080,7 @@ class JunebugHandler(BaseChannelHandler):
 
                 message_date = datetime.strptime(data['timestamp'], "%Y-%m-%d %H:%M:%S.%f")
                 gmt_date = pytz.timezone('GMT').localize(message_date)
-                # Use a session id if provided, otherwise fall back to using the `from` address as the identifier
-                session_id = channel_data.get('session_id') or data['from']
+                session_id = '%s.%s' % (data['from'], int(time.mktime(message_date.timetuple())))
 
                 session = USSDSession.handle_incoming(channel=channel, urn=data['from'], content=data['content'],
                                                       status=status, date=gmt_date, external_id=session_id,
