@@ -3,11 +3,10 @@ from __future__ import unicode_literals
 
 import json
 import six
-import time
 import uuid
 
 from datetime import datetime, timedelta
-from mock import patch, Mock
+from mock import patch
 
 from django.core.urlresolvers import reverse
 from django.conf import settings
@@ -24,9 +23,6 @@ from temba.flows.models import FlowRun
 from temba.utils import dict_to_struct
 
 from .models import USSDSession
-
-mock_time = Mock()
-mock_time.return_value = time.mktime(datetime(2017, 6, 21).timetuple())
 
 
 class USSDSessionTest(TembaTest):
@@ -859,7 +855,6 @@ class JunebugUSSDTest(JunebugTestMixin, TembaTest):
         self.assertEquals(outbound_msg.session.status, USSDSession.TRIGGERED)
         self.assertEquals(inbound_msg.direction, INCOMING)
 
-    @patch('time.mktime', mock_time)
     def test_receive_with_session_id(self):
         from temba.ussd.models import USSDSession
 
@@ -871,8 +866,8 @@ class JunebugUSSDTest(JunebugTestMixin, TembaTest):
         # load our message
         inbound_msg, outbound_msg = Msg.objects.all().order_by('pk')
         self.assertEquals(outbound_msg.session.status, USSDSession.TRIGGERED)
-        self.assertEquals(outbound_msg.session.external_id, '+27123456789.1498003200')
-        self.assertEquals(inbound_msg.session.external_id, '+27123456789.1498003200')
+        self.assertEquals(outbound_msg.session.external_id, 'session-id')
+        self.assertEquals(inbound_msg.session.external_id, 'session-id')
 
     def test_receive_ussd_no_session(self):
         from temba.channels.handlers import JunebugHandler
