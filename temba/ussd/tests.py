@@ -16,7 +16,8 @@ from django_redis import get_redis_connection
 from temba.channels.models import Channel
 from temba.channels.tests import JunebugTestMixin
 from temba.contacts.models import Contact, TEL_SCHEME
-from temba.msgs.models import WIRED, MSG_SENT_KEY, SENT, Msg, INCOMING, OUTGOING, USSD, DELIVERED, FAILED
+from temba.msgs.models import (WIRED, MSG_SENT_KEY, SENT, Msg, INCOMING, OUTGOING, USSD, DELIVERED, FAILED,
+                               HANDLED)
 from temba.tests import TembaTest, MockResponse
 from temba.triggers.models import Trigger
 from temba.flows.models import FlowRun
@@ -854,6 +855,7 @@ class JunebugUSSDTest(JunebugTestMixin, TembaTest):
         self.assertEquals(outbound_msg.response_to, inbound_msg)
         self.assertEquals(outbound_msg.session.status, USSDSession.TRIGGERED)
         self.assertEquals(inbound_msg.direction, INCOMING)
+        self.assertEquals(inbound_msg.status, HANDLED)
 
     def test_receive_with_session_id(self):
         from temba.ussd.models import USSDSession
