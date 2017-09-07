@@ -3,11 +3,10 @@ from __future__ import unicode_literals
 
 import json
 import six
-import time
 import uuid
 
 from datetime import datetime, timedelta
-from mock import patch, Mock
+from mock import patch
 
 from django.core.urlresolvers import reverse
 from django.conf import settings
@@ -17,16 +16,14 @@ from django_redis import get_redis_connection
 from temba.channels.models import Channel
 from temba.channels.tests import JunebugTestMixin
 from temba.contacts.models import Contact, TEL_SCHEME
-from temba.msgs.models import WIRED, MSG_SENT_KEY, SENT, Msg, INCOMING, OUTGOING, USSD, DELIVERED, FAILED
+from temba.msgs.models import (WIRED, MSG_SENT_KEY, SENT, Msg, INCOMING, OUTGOING, USSD, DELIVERED, FAILED,
+                               HANDLED)
 from temba.tests import TembaTest, MockResponse
 from temba.triggers.models import Trigger
 from temba.flows.models import FlowRun
 from temba.utils import dict_to_struct
 
 from .models import USSDSession
-
-mock_time = Mock()
-mock_time.return_value = time.mktime(datetime(2017, 6, 21).timetuple())
 
 
 class USSDSessionTest(TembaTest):
@@ -858,8 +855,8 @@ class JunebugUSSDTest(JunebugTestMixin, TembaTest):
         self.assertEquals(outbound_msg.response_to, inbound_msg)
         self.assertEquals(outbound_msg.session.status, USSDSession.TRIGGERED)
         self.assertEquals(inbound_msg.direction, INCOMING)
+        self.assertEquals(inbound_msg.status, HANDLED)
 
-    @patch('time.mktime', mock_time)
     def test_receive_with_session_id(self):
         from temba.ussd.models import USSDSession
 
@@ -871,8 +868,8 @@ class JunebugUSSDTest(JunebugTestMixin, TembaTest):
         # load our message
         inbound_msg, outbound_msg = Msg.objects.all().order_by('pk')
         self.assertEquals(outbound_msg.session.status, USSDSession.TRIGGERED)
-        self.assertEquals(outbound_msg.session.external_id, '+27123456789.1498003200')
-        self.assertEquals(inbound_msg.session.external_id, '+27123456789.1498003200')
+        self.assertEquals(outbound_msg.session.external_id, 'session-id')
+        self.assertEquals(inbound_msg.session.external_id, 'session-id')
 
     def test_receive_ussd_no_session(self):
         from temba.channels.handlers import JunebugHandler
