@@ -34,6 +34,7 @@ from django.utils.text import slugify
 from django_redis import get_redis_connection
 from enum import Enum
 from requests import Session
+from six.moves.urllib.parse import urlparse
 from smartmin.models import SmartModel
 from temba.bundles import get_brand_bundles, get_bundle_map
 from temba.locations.models import AdminBoundary, BoundaryAlias
@@ -45,7 +46,6 @@ from temba.utils.models import SquashableModel
 from temba.utils.text import random_string
 from temba.utils.timezones import timezone_to_country_code
 from timezone_field import TimeZoneField
-from urlparse import urlparse
 from uuid import uuid4
 
 

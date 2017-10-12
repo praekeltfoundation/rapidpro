@@ -1,7 +1,6 @@
 from __future__ import unicode_literals
 
 import json
-import urlparse
 
 from django.conf import settings
 from django.core.urlresolvers import reverse
@@ -11,6 +10,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import RedirectView, View
 from random import randint
 from smartmin.views import SmartCRUDL, SmartReadView, SmartFormView, SmartCreateView, SmartListView, SmartTemplateView
+from six.moves.urllib.parse import parse_qs
 from temba.public.models import Lead, Video
 from temba.utils import analytics, get_anonymous_user
 from temba.utils.text import random_string
@@ -25,7 +25,7 @@ class IndexView(SmartTemplateView):
         context['thanks'] = 'thanks' in self.request.GET
         context['errors'] = 'errors' in self.request.GET
         if context['errors']:
-            context['error_msg'] = urlparse.parse_qs(context['url_params'][1:])['errors'][0]
+            context['error_msg'] = parse_qs(context['url_params'][1:])['errors'][0]
 
         return context
 

@@ -13,13 +13,13 @@ from django.core.urlresolvers import reverse
 from django.utils import timezone
 from mock import patch, MagicMock
 from platform import python_version
+from six.moves.urllib.parse import urlparse
 from temba.channels.models import Channel, ChannelLog, ChannelSession
 from temba.contacts.models import Contact
 from temba.flows.models import Flow, FlowRun, ActionLog, FlowStep, FlowRevision
 from temba.msgs.models import Msg, IVR, OUTGOING, PENDING
 from temba.orgs.models import CURRENT_EXPORT_VERSION
 from temba.tests import FlowFileTest, MockTwilioClient, MockRequestValidator, MockResponse
-from urlparse import urlparse
 from .clients import IVRException
 from .models import IVRCall
 

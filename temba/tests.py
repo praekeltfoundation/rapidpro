@@ -11,7 +11,6 @@ import shutil
 import string
 import six
 import time
-import urlparse
 
 from datetime import datetime, timedelta
 from django.conf import settings
@@ -25,6 +24,7 @@ from django.utils.http import quote_plus
 from HTMLParser import HTMLParser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from selenium.webdriver.firefox.webdriver import WebDriver
+from six.moves.urllib.parse import parse_qs, urlparse
 from smartmin.tests import SmartminTest
 from temba.contacts.models import Contact, ContactGroup, ContactField, URN
 from temba.orgs.models import Org
@@ -53,8 +53,8 @@ class MockServerRequestHandler(BaseHTTPRequestHandler):
         # record this request so calling test can verify it was made
         TembaTestRunner.MOCKED_REQUESTS.append({'method': method, 'url': 'http://localhost:49999%s' % self.path})
 
-        parsed = urlparse.urlparse(self.path)
-        params = urlparse.parse_qs(parsed.query)
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
         if parsed.path == '/echo':
             return self._handle_echo(params)
         else:

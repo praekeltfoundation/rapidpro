@@ -11,6 +11,7 @@ from django.core.urlresolvers import reverse
 from django.test import override_settings
 from django.utils import timezone
 from mock import patch
+from six.moves.urllib.parse import parse_qs
 
 from temba.api.tasks import trim_webhook_event_task
 from temba.channels.models import ChannelEvent, SyncEvent
@@ -19,7 +20,6 @@ from temba.flows.models import ActionSet, WebhookAction, Flow
 from temba.msgs.models import Broadcast, FAILED
 from temba.orgs.models import ALL_EVENTS
 from temba.tests import MockResponse, TembaTest
-from urlparse import parse_qs
 from temba.api.models import APIToken, WebHookEvent, WebHookResult
 
 
