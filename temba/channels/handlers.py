@@ -10,6 +10,7 @@ import six
 import magic
 import xml.etree.ElementTree as ET
 
+from builtins import str as text_str
 from datetime import datetime
 from django.conf import settings
 from django.core.files import File
@@ -2364,7 +2365,7 @@ class JioChatHandler(BaseChannelHandler):
         create_time = body.get('CreateTime', None)
         msg_date = None
         if create_time:
-            msg_date = datetime.utcfromtimestamp(float(unicode(create_time)[:10])).replace(tzinfo=pytz.utc)
+            msg_date = datetime.utcfromtimestamp(float(text_str(create_time)[:10])).replace(tzinfo=pytz.utc)
         msg_type = body.get('MsgType')
         external_id = body.get('MsgId', None)
 

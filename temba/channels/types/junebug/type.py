@@ -3,6 +3,7 @@ from __future__ import unicode_literals, absolute_import
 import json
 import time
 
+from builtins import str as text_str
 from datetime import timedelta
 
 import requests
@@ -93,7 +94,7 @@ class JunebugType(ChannelType):
             event.response_body = response.text
 
         except Exception as e:
-            raise SendException(unicode(e), event=event, start=start)
+            raise SendException(text_str(e), event=event, start=start)
 
         if not (200 <= response.status_code < 300):
             raise SendException("Received a non 200 response %d from Junebug" % response.status_code,

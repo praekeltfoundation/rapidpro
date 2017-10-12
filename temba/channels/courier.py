@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import time
 import json
+from builtins import str as text_str
 from django_redis import get_redis_connection
 from temba.utils import datetime_to_str
 
@@ -39,7 +40,7 @@ def msg_as_task(msg):
     Used to serialize msgs as tasks to courier
     """
     msg_json = dict(id=msg.id,
-                    uuid=unicode(msg.uuid) if msg.uuid else "",
+                    uuid=text_str(msg.uuid) if msg.uuid else "",
                     org_id=msg.org_id,
                     channel_id=msg.channel_id,
                     channel_uuid=msg.channel.uuid,
