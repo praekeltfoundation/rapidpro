@@ -10,7 +10,6 @@ import json
 import pytz
 import six
 import time
-import urllib2
 import uuid
 
 from datetime import timedelta, date, datetime
@@ -25,6 +24,7 @@ from django.utils import timezone
 from django.template import loader
 from django_redis import get_redis_connection
 from mock import patch
+from six.moves.urllib.parse import quote
 from smartmin.tests import SmartminTest
 
 from temba.api.models import WebHookEvent
@@ -571,7 +571,7 @@ class ChannelTest(TembaTest):
             signature = hmac.new(key=key, msg=bytes(post_data), digestmod=hashlib.sha256).digest()
 
             # base64 and url sanitize
-            signature = urllib2.quote(base64.urlsafe_b64encode(signature))
+            signature = quote(base64.urlsafe_b64encode(signature))
 
         return self.client.post("%s?signature=%s&ts=%d" % (reverse('sync', args=[channel.pk]), signature, ts),
                                 content_type='application/json', data=post_data)
