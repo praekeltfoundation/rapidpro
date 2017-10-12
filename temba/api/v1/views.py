@@ -1,7 +1,6 @@
 from __future__ import absolute_import, unicode_literals
 
 import six
-import urllib
 
 from django import forms
 from django.contrib.auth import authenticate, login
@@ -12,6 +11,7 @@ from django.views.decorators.csrf import csrf_exempt
 from rest_framework import generics, mixins, status, pagination, views
 from rest_framework.response import Response
 from rest_framework.reverse import reverse
+from six.moves.urllib.parse import urlencode
 from smartmin.views import SmartFormView
 from temba.api.models import APIToken
 from temba.contacts.models import Contact, ContactField, ContactGroup, TEL_SCHEME
@@ -105,7 +105,7 @@ class ListAPIMixin(mixins.ListModelMixin):
             # param values should be in UTF8
             encoded_params = [(p[0], [v.encode('utf-8') for v in p[1]]) for p in query_params.lists()]
 
-            query_key = urllib.urlencode(sorted(encoded_params), doseq=True)
+            query_key = urlencode(sorted(encoded_params), doseq=True)
             count_key = REQUEST_COUNT_CACHE_KEY % (self.request.user.get_org().pk, query_key)
 
             # only try to use cached count for pages other than the first

@@ -1,10 +1,9 @@
 from __future__ import absolute_import, print_function, unicode_literals
 
 import json
-from urllib import urlencode
-
 import six
 
+from six.moves.urllib.parse import urlencode
 from twilio.rest import Messages, Calls
 from twilio.rest import TwilioRestClient
 from twilio.rest import UNSET_TIMEOUT

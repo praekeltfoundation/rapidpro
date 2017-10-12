@@ -24,7 +24,7 @@ from django.utils import timezone
 from django.template import loader
 from django_redis import get_redis_connection
 from mock import patch
-from six.moves.urllib.parse import quote
+from six.moves.urllib.parse import quote, urlencode
 from smartmin.tests import SmartminTest
 
 from temba.api.models import WebHookEvent
@@ -48,7 +48,6 @@ from temba.utils.queues import push_task
 from twilio import TwilioRestException
 from twilio.util import RequestValidator
 from twython import TwythonError
-from urllib import urlencode
 from xml.etree import ElementTree as ET
 
 
