@@ -70,6 +70,9 @@ class JunebugType(ChannelType):
                 'continue_session': connection and not connection.should_end or False,
             }
         else:
+            if msg.response_to_id:
+                payload['reply_to'] = Msg.objects.values_list('external_id', flat=True).filter(pk=msg.response_to_id).first()
+
             payload['from'] = channel.address
             payload['to'] = msg.urn_path
 
