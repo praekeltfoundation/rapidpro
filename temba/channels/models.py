@@ -1163,6 +1163,44 @@ class Channel(TembaModel):
             payload['from'] = channel.address
             payload['to'] = msg.urn_path
 
+        log_url = channel.config[Channel.CONFIG_SEND_URL]
+        start = time.time()
+
+        event = HttpEvent('POST', log_url, json.dumps(payload))
+        headers = http_headers(extra={'Accept': 'application/json'})
+
+        try:
+            response = requests.post(
+                channel.config[Channel.CONFIG_SEND_URL], verify=True,
+                json=payload, timeout=15, headers=headers,
+                auth=(channel.config[Channel.CONFIG_USERNAME],
+                      channel.config[Channel.CONFIG_PASSWORD]))
+
+            event.status_code = response.status_code
+            event.response_body = response.text
+
+        except Exception as e:
+            raise SendException(unicode(e), event=event, start=start)
+
+        if not (200 <= response.status_code < 300):
+            raise SendException("Received a non 200 response %d from Junebug" % response.status_code,
+                                event=event, start=start)
+
+        data = response.json()
+
+        if is_ussd and session and session.should_end:
+            session.close()
+
+        try:
+            message_id = data['result']['message_id']
+            Channel.success(channel, msg, WIRED, start, event=event, external_id=message_id)
+        except KeyError, e:
+            raise SendException("Unable to read external message_id: %r" % (e,),
+                                event=HttpEvent('POST', log_url,
+                                                request_body=json.dumps(json.dumps(payload)),
+                                                response_body=json.dumps(data)),
+                                start=start)
+
     def get_pending_messages(cls, org):
         """
         We want all messages that are:
