@@ -1180,7 +1180,7 @@ class Channel(TembaModel):
             event.response_body = response.text
 
         except Exception as e:
-            raise SendException(unicode(e), event=event, start=start)
+            raise SendException(e, event=event, start=start)
 
         if not (200 <= response.status_code < 300):
             raise SendException("Received a non 200 response %d from Junebug" % response.status_code,
