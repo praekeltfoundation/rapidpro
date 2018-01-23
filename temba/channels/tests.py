@@ -8209,7 +8209,6 @@ class JunebugTest(JunebugTestMixin, TembaTest):
 
             self.assertEqual(mock.call_args[1]['json']['content'], "événement")
 
-<<<<<<< HEAD
     def test_send_wired_with_reply_to(self):
         joe = self.create_contact("Joe", "+250788383383")
 
@@ -8246,9 +8245,7 @@ class JunebugTest(JunebugTestMixin, TembaTest):
             self.assertEqual(mock.call_args[1]['json']['to'], "+250788383383")
             self.assertEqual(mock.call_args[1]['json']['from'], msg.channel.address)
 
-=======
     @override_settings(SEND_MESSAGES=True)
->>>>>>> upstream/master
     def test_send_media(self):
         joe = self.create_contact("Joe", "+250788383383")
         msg = joe.send("MT", self.admin, trigger_send=False, attachments=['image/jpeg:https://example.com/attachments/pic.jpg'])[0]

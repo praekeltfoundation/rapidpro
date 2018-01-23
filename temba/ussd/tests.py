@@ -16,10 +16,7 @@ from django_redis import get_redis_connection
 from temba.channels.models import Channel
 from temba.channels.tests import JunebugTestMixin
 from temba.contacts.models import Contact, TEL_SCHEME
-<<<<<<< HEAD
-=======
 from temba.flows.models import FlowRun, FlowSession
->>>>>>> upstream/master
 from temba.msgs.models import (WIRED, MSG_SENT_KEY, SENT, Msg, INCOMING, OUTGOING, USSD, DELIVERED, FAILED,
                                HANDLED)
 from temba.tests import TembaTest, MockResponse
@@ -864,19 +861,11 @@ class JunebugUSSDTest(JunebugTestMixin, TembaTest):
 
         # load our message
         inbound_msg, outbound_msg = Msg.objects.all().order_by('pk')
-<<<<<<< HEAD
-        self.assertEquals(data["from"], outbound_msg.contact.get_urn(TEL_SCHEME).path)
-        self.assertEquals(outbound_msg.response_to, inbound_msg)
-        self.assertEquals(outbound_msg.session.status, USSDSession.TRIGGERED)
-        self.assertEquals(inbound_msg.direction, INCOMING)
-        self.assertEquals(inbound_msg.status, HANDLED)
-=======
         self.assertEqual(data["from"], outbound_msg.contact.get_urn(TEL_SCHEME).path)
         self.assertEqual(outbound_msg.response_to, inbound_msg)
         self.assertEqual(outbound_msg.connection.status, USSDSession.TRIGGERED)
         self.assertEqual(inbound_msg.direction, INCOMING)
         self.assertEqual(inbound_msg.status, HANDLED)
->>>>>>> upstream/master
 
     def test_receive_with_session_id(self):
         from temba.ussd.models import USSDSession
