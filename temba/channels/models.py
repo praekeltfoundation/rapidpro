@@ -1115,6 +1115,7 @@ class Channel(TembaModel):
         external_id = response.json().get('message_token', None)
         Channel.success(channel, msg, WIRED, start, event=event, external_id=external_id)
 
+    @classmethod
     def get_pending_messages(cls, org):
         """
         We want all messages that are:
