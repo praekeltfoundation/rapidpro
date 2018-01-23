@@ -8209,6 +8209,7 @@ class JunebugTest(JunebugTestMixin, TembaTest):
 
             self.assertEqual(mock.call_args[1]['json']['content'], "événement")
 
+    @override_settings(SEND_MESSAGES=True)
     def test_send_wired_with_reply_to(self):
         joe = self.create_contact("Joe", "+250788383383")
 
@@ -8219,8 +8220,6 @@ class JunebugTest(JunebugTestMixin, TembaTest):
         msg = joe.send("événement", self.admin, trigger_send=False)[0]
         msg.response_to = incoming
         msg.save(update_fields=('response_to',))
-
-        settings.SEND_MESSAGES = True
 
         with patch('requests.post') as mock:
             mock.return_value = MockResponse(200, json.dumps({
