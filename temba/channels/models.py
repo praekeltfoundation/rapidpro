@@ -1194,7 +1194,7 @@ class Channel(TembaModel):
         try:
             message_id = data['result']['message_id']
             Channel.success(channel, msg, WIRED, start, event=event, external_id=message_id)
-        except KeyError, e:
+        except KeyError as e:
             raise SendException("Unable to read external message_id: %r" % (e,),
                                 event=HttpEvent('POST', log_url,
                                                 request_body=json.dumps(json.dumps(payload)),
