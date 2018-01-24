@@ -13,7 +13,7 @@ class LineTypeTest(TembaTest):
         super(LineTypeTest, self).setUp()
 
         self.channel = Channel.create(self.org, self.user, None, 'LN', name="LINE", address="12345",
-                                      role="SR", scheme='line',
+                                      role="SR", schemes=['line'],
                                       config={'auth_token': 'abcdef098765', 'channel_secret': '87654'})
 
     @patch('requests.get')
@@ -44,7 +44,7 @@ class LineTypeTest(TembaTest):
         response = self.client.post(url, payload, follow=True)
         self.assertContains(response, "A channel with this configuration already exists.")
 
-        self.org.channels.update(is_active=False, org=None)
+        self.org.channels.update(is_active=False)
 
         mock_get.return_value = MockResponse(401, json.dumps(dict(error_desciption="invalid token")))
         payload = {'access_token': 'abcdef123456', 'secret': '123456'}

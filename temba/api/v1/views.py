@@ -17,7 +17,8 @@ from temba.api.models import APIToken
 from temba.contacts.models import Contact, ContactField, ContactGroup, TEL_SCHEME
 from temba.flows.models import Flow, FlowRun
 from temba.locations.models import AdminBoundary, BoundaryAlias
-from temba.utils import json_date_to_datetime, splitting_getlist, str_to_bool
+from temba.utils import splitting_getlist, str_to_bool
+from temba.utils.dates import json_date_to_datetime
 from ..models import APIPermission, SSLPermission
 from .serializers import BoundarySerializer, AliasSerializer, ContactReadSerializer, ContactWriteSerializer
 from .serializers import ContactFieldReadSerializer, ContactFieldWriteSerializer, FlowReadSerializer
@@ -290,7 +291,7 @@ class ContactEndpoint(ListAPIMixin, CreateAPIMixin, BaseAPIView):
 
         urns = self.request.query_params.getlist('urns', None)
         if urns:
-            queryset = queryset.filter(urns__urn__in=urns)
+            queryset = queryset.filter(urns__identity__in=urns)
 
         groups = self.request.query_params.getlist('group', None)  # deprecated, use group_uuids
         if groups:
@@ -718,7 +719,7 @@ class OrgEndpoint(BaseAPIView):
         {
             "name": "Nyaruka",
             "country": "RW",
-            "languages": ["eng", "fre"],
+            "languages": ["eng", "fra"],
             "primary_language": "eng",
             "timezone": "Africa/Kigali",
             "date_style": "day_first",
