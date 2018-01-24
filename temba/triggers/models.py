@@ -165,6 +165,10 @@ class Trigger(SmartModel):
             else:
                 matches = matches.filter(groups=None)
 
+            # if this trigger has a referrer_id, only archive others with the same referrer_id
+            if self.referrer_id is not None:
+                matches = matches.filter(referrer_id__iexact=self.referrer_id)
+
             # if this trigger has a channel, only archive others with the same channel
             if self.channel:
                 matches = matches.filter(channel=self.channel)
@@ -188,7 +192,7 @@ class Trigger(SmartModel):
         Import triggers from our export file
         """
         from temba.orgs.models import EARLIEST_IMPORT_VERSION
-        if exported_json.get('version', 0) < EARLIEST_IMPORT_VERSION:  # pragma: needs cover
+        if Flow.is_before_version(exported_json.get('version', 0), EARLIEST_IMPORT_VERSION):  # pragma: needs cover
             raise ValueError(_("Unknown version (%s)" % exported_json.get('version', 0)))
 
         # first things first, let's create our groups if necesary and map their ids accordingly
@@ -271,7 +275,11 @@ class Trigger(SmartModel):
             triggers = triggers.filter(models.Q(channel=channel) | models.Q(channel=None))
 
         if referrer_id is not None:
-            triggers = triggers.filter(referrer_id=referrer_id)
+            triggers = triggers.filter(models.Q(referrer_id__iexact=referrer_id) | models.Q(referrer_id=''))
+
+            # if we catch more than one trigger with a referrer_id, ignore the catchall
+            if len(triggers) > 1:
+                triggers = triggers.exclude(referrer_id='')
 
         # is there a match for a group specific trigger?
         group_ids = contact.user_groups.values_list('pk', flat=True)
@@ -326,12 +334,6 @@ class Trigger(SmartModel):
             return False
 
         contact = msg.contact
-
-        if not contact.is_test:
-            trigger.last_triggered = msg.created_on
-            trigger.trigger_count += 1
-            trigger.save()
-
         contact.ensure_unstopped()
 
         # if we have an associated flow, start this contact in it
@@ -361,10 +363,6 @@ class Trigger(SmartModel):
             return None
 
         trigger = matching[0]
-        trigger.last_triggered = timezone.now()
-        trigger.trigger_count += 1
-        trigger.save()
-
         return trigger.flow
 
     @classmethod
@@ -384,10 +382,6 @@ class Trigger(SmartModel):
             return None
 
         trigger = matching.first()
-        trigger.last_triggered = timezone.now()
-        trigger.trigger_count += 1
-        trigger.save()
-
         return trigger
 
     @classmethod
@@ -399,7 +393,7 @@ class Trigger(SmartModel):
 
     @classmethod
     def apply_action_restore(cls, user, triggers):
-        restore_priority = triggers.order_by('-last_triggered', '-modified_on')
+        restore_priority = triggers.order_by('-modified_on')
         trigger_scopes = set()
 
         # work through all the restored triggers in order of most recent used
@@ -444,6 +438,4 @@ class Trigger(SmartModel):
             start = FlowStart.create(self.flow, self.created_by, groups=groups, contacts=contacts)
             start.async_start()
 
-        self.last_triggered = timezone.now()
-        self.trigger_count += 1
         self.save()
