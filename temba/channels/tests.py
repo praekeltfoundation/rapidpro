@@ -8990,6 +8990,42 @@ class JunebugTest(JunebugTestMixin, TembaTest):
 
             self.assertEqual(mock.call_args[1]['json']['content'], "événement")
 
+    def test_send_wired_with_reply_to(self):
+        joe = self.create_contact("Joe", "+250788383383")
+
+        incoming = self.create_msg(direction=INCOMING, contact=joe, text="Read message")
+        incoming.external_id = "88888"
+        incoming.save(update_fields=('external_id',))
+
+        msg = joe.send("événement", self.admin, trigger_send=False)[0]
+        msg.response_to = incoming
+        msg.save(update_fields=('response_to',))
+
+        settings.SEND_MESSAGES = True
+
+        with patch('requests.post') as mock:
+            mock.return_value = MockResponse(200, json.dumps({
+                'result': {
+                    'message_id': '07033084-5cfd-4812-90a4-e4d24ffb6e3d',
+                }
+            }))
+
+            # manually send it off
+            Channel.send_message(dict_to_struct('MsgStruct', msg.as_task_json()))
+
+            # check the status of the message is now sent
+            msg.refresh_from_db()
+            self.assertEqual(msg.status, WIRED)
+            self.assertTrue(msg.sent_on)
+            self.assertEqual(
+                msg.external_id, '07033084-5cfd-4812-90a4-e4d24ffb6e3d')
+
+            self.clear_cache()
+
+            self.assertEqual(mock.call_args[1]['json']['reply_to'], "88888")
+            self.assertEqual(mock.call_args[1]['json']['to'], "+250788383383")
+            self.assertEqual(mock.call_args[1]['json']['from'], msg.channel.address)
+
     def test_send_media(self):
         joe = self.create_contact("Joe", "+250788383383")
         msg = joe.send("MT", self.admin, trigger_send=False, attachments=['image/jpeg:https://example.com/attachments/pic.jpg'])[0]
