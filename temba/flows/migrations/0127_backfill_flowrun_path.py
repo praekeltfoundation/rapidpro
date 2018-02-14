@@ -149,7 +149,8 @@ def backfill_flowrun_path(ActionSet, FlowRun, FlowStep):
 
         print(status)
 
-    print("Run path migration completed in %d mins. %d paths were trimmed" % ((int(time.time() - start) / 60), num_trimmed))
+    if start:
+        print("Run path migration completed in %d mins. %d paths were trimmed" % ((int(time.time() - start) / 60), num_trimmed))
 
 
 def apply_manual():
