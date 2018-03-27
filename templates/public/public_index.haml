@@ -38,6 +38,11 @@
           }
         }
 
+        #spacer {
+          padding-top:63px;
+          background-color: #0c6596;
+        }
+
     {% endlessblock %}
 
 -block post-header
@@ -61,6 +66,8 @@
                       -trans "Create Account"
           -if errors
             %p.text-error {{error_msg}}
+      {% else %}
+        #spacer
       {% endif %}
 
     -if not thanks
