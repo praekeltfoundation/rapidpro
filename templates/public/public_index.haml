@@ -38,6 +38,11 @@
           }
         }
 
+        #spacer {
+          padding-top:63px;
+          background-color: #0c6596;
+        }
+
     {% endlessblock %}
 
 -block post-header
@@ -47,19 +52,22 @@
           {{ brand.description }}
 
     .row
-      #lead-form
-        %form{action:'{% ssl_brand_url "public.lead_create" %}', method:'POST'}
-          -csrf_token
+      -if allow_signups
+        #lead-form
+          %form{action:'{% ssl_brand_url "public.lead_create" %}', method:'POST'}
+            -csrf_token
 
-          %fieldset
-            .control-group
-              .controls
-                %nobr
-                  %input.controls{'type':"text", 'name':"email", 'placeholder':"Enter your email.."}
-                  %button.btn.btn-success{type:"submit"}
-                    -trans "Create Account"
-        -if errors
-          %p.text-error {{error_msg}}
+            %fieldset
+              .control-group
+                .controls
+                  %nobr
+                    %input.controls{'type':"text", 'name':"email", 'placeholder':"Enter your email.."}
+                    %button.btn.btn-success{type:"submit"}
+                      -trans "Create Account"
+          -if errors
+            %p.text-error {{error_msg}}
+      -else
+        #spacer
 
     -if not thanks
       %br.clearfix{clear:"both"}
