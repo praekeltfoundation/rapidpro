@@ -124,7 +124,8 @@ def backfill_flowrun_messages(FlowRun, FlowStep, Msg):
 
         print(status)
 
-    print("Run messages migration completed in %d mins. %d paths were trimmed" % ((int(time.time() - start) / 60), num_trimmed))
+    if start:
+        print("Run messages migration completed in %d mins. %d paths were trimmed" % ((int(time.time() - start) / 60), num_trimmed))
 
 
 def apply_manual():

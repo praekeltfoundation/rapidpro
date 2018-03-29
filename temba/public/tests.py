@@ -1,5 +1,8 @@
 from __future__ import unicode_literals
 
+import copy
+
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.urlresolvers import reverse
 from smartmin.tests import SmartminTest, _CRUDLTest
@@ -17,6 +20,15 @@ class PublicTest(SmartminTest):
         home_url = reverse('public.public_index')
         response = self.client.get(home_url, follow=True)
         self.assertEqual(response.request['PATH_INFO'], '/')
+
+        # check signup form displayed by default
+        self.assertContains(self.client.get(home_url), "Create Account")
+
+        # check signup form not displayed if signups unavailable
+        branding = copy.deepcopy(settings.BRANDING)
+        branding['rapidpro.io']['allow_signups'] = False
+        with self.settings(BRANDING=branding):
+            self.assertNotContains(self.client.get(home_url), "Create Account")
 
         # try to create a lead from the homepage
         lead_create_url = reverse('public.lead_create')
