@@ -26,7 +26,7 @@ class PublicTest(SmartminTest):
 
         # check signup form not displayed if signups unavailable
         branding = copy.deepcopy(settings.BRANDING)
-        branding['rapidpro.io']['allow_signups'] = False
+        branding["rapidpro.io"]["allow_signups"] = False
         with self.settings(BRANDING=branding):
             self.assertNotContains(self.client.get(home_url), "Create Account")
 
