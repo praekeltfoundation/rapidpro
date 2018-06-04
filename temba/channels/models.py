@@ -1395,8 +1395,6 @@ class Channel(TembaModel):
 
                 traceback.print_exc()
 
-                ChannelLog.log_error(msg, six.text_type(e))
-
                 Msg.mark_error(r, channel, msg)
                 sent_count -= 1
 
