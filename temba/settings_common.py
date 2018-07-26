@@ -862,13 +862,6 @@ _default_database_config = {
     'OPTIONS': {}
 }
 
-import dj_database_url
-DATABASE_URL = "postgresql://erikh:erikh@192.168.0.6:5432/gates_rapidpro_prod"
-_default_database_config = dj_database_url.parse(DATABASE_URL)
-_default_database_config['CONN_MAX_AGE'] = 60
-_default_database_config['ATOMIC_REQUESTS'] = True
-_default_database_config['ENGINE'] = 'django.contrib.gis.db.backends.postgis'
-
 _direct_database_config = _default_database_config.copy()
 _default_database_config['DISABLE_SERVER_SIDE_CURSORS'] = True
 
