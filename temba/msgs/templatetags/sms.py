@@ -13,6 +13,7 @@ PLAYABLE_CONTENT_TYPES = {
     "audio/ogg",
     "audio/mp3",
     "audio/m4a",
+    "audio/x-m4a",
     "video/mp4",
     "video/webm",
 }
@@ -83,7 +84,6 @@ def render(parser, token):
     """
 
     class RenderNode(template.Node):
-
         def __init__(self, nodelist, as_var):
             self.nodelist = nodelist
             self.as_var = as_var

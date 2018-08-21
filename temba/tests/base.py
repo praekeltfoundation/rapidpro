@@ -20,17 +20,18 @@ from smartmin.tests import SmartminTest
 from django.conf import settings
 from django.contrib.auth.models import Group, User
 from django.core import mail
-from django.core.urlresolvers import reverse
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.test import LiveServerTestCase, override_settings
 from django.test.runner import DiscoverRunner
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.encoding import force_bytes, force_text
 
 from temba.channels.models import Channel
 from temba.contacts.models import URN, Contact, ContactField, ContactGroup
-from temba.flows.models import ActionSet, Flow, FlowRevision, RuleSet, clear_flow_users
+from temba.flows.models import ActionSet, Flow, FlowRevision, FlowRun, RuleSet, clear_flow_users
+from temba.ivr.models import IVRCall
 from temba.locations.models import AdminBoundary
 from temba.msgs.models import INCOMING, Msg
 from temba.orgs.models import Org
@@ -133,7 +134,6 @@ class AddFlowServerTestsMeta(type):
 
 
 class ESMockWithScroll:
-
     def __init__(self, data=None):
         self.mock_es = patch("temba.utils.es.ES")
 
@@ -163,14 +163,44 @@ class ESMockWithScroll:
         self.mock_es.stop()
 
 
-class TembaTestMixin(object):
+class ESMockWithScrollMultiple(ESMockWithScroll):
+    def __enter__(self):
+        patched_object = self.mock_es.start()
 
+        patched_object.search.side_effect = [
+            {
+                "_shards": {"failed": 0, "successful": 10, "total": 10},
+                "timed_out": False,
+                "took": 1,
+                "_scroll_id": "1",
+                "hits": {"hits": return_value},
+            }
+            for return_value in self.data
+        ]
+        patched_object.scroll.side_effect = [
+            {
+                "_shards": {"failed": 0, "successful": 10, "total": 10},
+                "timed_out": False,
+                "took": 1,
+                "_scroll_id": "1",
+                "hits": {"hits": []},
+            }
+            for _ in range(len(self.data))
+        ]
+
+        return patched_object()
+
+
+class TembaTestMixin(object):
     def clear_cache(self):
         """
-        Clears the redis cache. We are extra paranoid here and actually hard-code redis to 'localhost' and '10'
+        Clears the redis cache. We are extra paranoid here and check that redis host is 'localhost'
         Redis 10 is our testing redis db
         """
-        r = redis.StrictRedis(host="localhost", db=10)
+        if settings.REDIS_HOST != "localhost":
+            raise ValueError(f"Expected redis test server host to be: 'localhost', got '{settings.REDIS_HOST}'")
+
+        r = redis.StrictRedis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, db=10)
         r.flushdb()
 
     def clear_storage(self):
@@ -296,7 +326,7 @@ class TembaTestMixin(object):
             return group
 
     def create_field(self, key, label, value_type=Value.TYPE_TEXT):
-        return ContactField.objects.create(
+        return ContactField.user_fields.create(
             org=self.org, key=key, label=label, value_type=value_type, created_by=self.admin, modified_by=self.admin
         )
 
@@ -425,6 +455,11 @@ class TembaTestMixin(object):
                 "test has %d unused mock requests: %s"
                 % (len(mock_server.mocked_requests), mock_server.mocked_requests)
             )
+        if self.mock_server.unexpected_requests:
+            self.fail(
+                "test made %d expected requests: %s"
+                % (len(mock_server.unexpected_requests), mock_server.unexpected_requests)
+            )
 
     def assertExcelRow(self, sheet, row_num, values, tz=None):
         """
@@ -446,9 +481,6 @@ class TembaTestMixin(object):
 
             if actual is None:
                 actual = ""
-
-            if isinstance(actual, datetime):
-                actual = actual
 
             actual_values.append(actual)
 
@@ -496,7 +528,6 @@ class TembaTestMixin(object):
 
 
 class TembaTest(TembaTestMixin, SmartminTest, metaclass=AddFlowServerTestsMeta):
-
     def setUp(self):
         self.maxDiff = 4096
         self.mock_server = mock_server
@@ -614,9 +645,41 @@ class TembaTest(TembaTestMixin, SmartminTest, metaclass=AddFlowServerTestsMeta):
         # clear any unused mock requests
         self.mock_server.mocked_requests = []
 
+    def release(self, objs, delete=False, user=None):
+        for obj in objs:
+            if user:
+                obj.release(user)
+            else:
+                obj.release()
+
+            if obj.id and delete:
+                obj.delete()
+
+    def releaseChannels(self, delete=False):
+        channels = Channel.objects.all()
+        self.release(channels)
+        if delete:
+            for channel in channels:
+                channel.counts.all().delete()
+                channel.delete()
+
+    def releaseIVRCalls(self, delete=False):
+        self.release(IVRCall.objects.all(), delete=delete)
+
+    def releaseMessages(self):
+        self.release(Msg.objects.all())
+
+    def releaseContacts(self, delete=False):
+        self.release(Contact.objects.all(), delete=delete, user=self.admin)
+
+    def releaseContactFields(self, delete=False):
+        self.release(ContactField.all_fields.all(), delete=delete, user=self.admin)
+
+    def releaseRuns(self, delete=False):
+        self.release(FlowRun.objects.all(), delete=delete)
+
 
 class FlowFileTest(TembaTest):
-
     def setUp(self):
         super().setUp()
         self.contact = self.create_contact("Ben Haggerty", number="+12065552020")
@@ -720,7 +783,6 @@ class FlowFileTest(TembaTest):
 
 
 class MLStripper(HTMLParser):  # pragma: no cover
-
     def __init__(self):
         self.reset()
         self.fed = []
@@ -733,7 +795,6 @@ class MLStripper(HTMLParser):  # pragma: no cover
 
 
 class BrowserTest(LiveServerTestCase):  # pragma: no cover
-
     @classmethod
     def setUpClass(cls):
         cls.driver = WebDriver()
@@ -873,7 +934,6 @@ class BrowserTest(LiveServerTestCase):  # pragma: no cover
 
 
 class MockResponse(object):
-
     def __init__(self, status_code, text, method="GET", url="http://foo.com/", headers=None):
         self.text = force_text(text)
         self.content = force_bytes(text)

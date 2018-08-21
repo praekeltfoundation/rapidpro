@@ -36,14 +36,13 @@ elasticsearch_dsl
 
 ########################## file types ##########################
 geojson
-lxml
 markdown
-openpyxl
 pisa
 pyexcel-xls
 pyexcel-xlsx
 python-magic
 xlutils
+xlsxlite
 
 ########################## misc ##########################
 antlr4-python3-runtime
@@ -60,7 +59,7 @@ pycountry
 pycrypto
 python-dateutil==2.2
 pytz
-psycopg2
+psycopg2-binary
 rapidpro-expressions
 redis
 requests
@@ -68,6 +67,7 @@ stop-words
 unidecode
 python-intercom
 pysocks; python_version >= "3.0"
+pip-tools
 
 ########################## testing ##########################
 black
@@ -77,5 +77,6 @@ flake8-deprecated
 flake8-print
 isort
 mock
+openpyxl
 responses
 selenium

@@ -2,8 +2,8 @@ from smartmin.views import SmartCreateView, SmartCRUDL, SmartDeleteView, SmartLi
 
 from django import forms
 from django.core.exceptions import ValidationError
-from django.core.urlresolvers import reverse
 from django.http import HttpResponseRedirect
+from django.urls import reverse
 from django.utils.translation import ugettext_lazy as _
 from django.views.decorators.csrf import csrf_exempt
 
@@ -28,7 +28,6 @@ class CampaignActionForm(BaseActionForm):
 
 
 class CampaignActionMixin(SmartListView):
-
     @csrf_exempt
     def dispatch(self, *args, **kwargs):
         return super().dispatch(*args, **kwargs)
@@ -69,10 +68,9 @@ class CampaignCRUDL(SmartCRUDL):
     actions = ("create", "read", "update", "list", "archived")
 
     class OrgMixin(OrgPermsMixin):
-
         def derive_queryset(self, *args, **kwargs):
             queryset = super().derive_queryset(*args, **kwargs)
-            if not self.request.user.is_authenticated():  # pragma: no cover
+            if not self.request.user.is_authenticated:  # pragma: no cover
                 return queryset.exclude(pk__gt=0)
             else:
                 return queryset.filter(org=self.request.user.get_org())
@@ -118,7 +116,6 @@ class CampaignCRUDL(SmartCRUDL):
             return response
 
     class Read(OrgMixin, SmartReadView):
-
         def get_gear_links(self):
             links = []
             if self.has_org_perm("campaigns.campaignevent_create"):
@@ -130,9 +127,7 @@ class CampaignCRUDL(SmartCRUDL):
             return links
 
     class Create(OrgPermsMixin, ModalMixin, SmartCreateView):
-
         class CampaignForm(forms.ModelForm):
-
             def __init__(self, user, *args, **kwargs):
                 super().__init__(*args, **kwargs)
 
@@ -209,7 +204,7 @@ class CampaignCRUDL(SmartCRUDL):
             return qs
 
 
-class EventForm(forms.ModelForm):
+class CampaignEventForm(forms.ModelForm):
 
     event_type = forms.ChoiceField(
         choices=((CampaignEvent.TYPE_MESSAGE, "Send a message"), (CampaignEvent.TYPE_FLOW, "Start a flow")),
@@ -291,7 +286,7 @@ class EventForm(forms.ModelForm):
         org = self.user.get_org()
 
         relative_to = self.fields["relative_to"]
-        relative_to.queryset = ContactField.objects.filter(
+        relative_to.queryset = ContactField.all_fields.filter(
             org=org, is_active=True, value_type=Value.TYPE_DATETIME
         ).order_by("label")
 
@@ -364,7 +359,6 @@ class CampaignEventCRUDL(SmartCRUDL):
     actions = ("create", "delete", "read", "update")
 
     class Read(OrgObjPermsMixin, SmartReadView):
-
         def get_object_org(self):
             return self.get_object().campaign.org
 
@@ -424,7 +418,7 @@ class CampaignEventCRUDL(SmartCRUDL):
 
     class Update(OrgPermsMixin, ModalMixin, SmartUpdateView):
         success_message = ""
-        form_class = EventForm
+        form_class = CampaignEventForm
 
         default_fields = ["event_type", "flow_to_start", "offset", "unit", "direction", "relative_to", "delivery_hour"]
 
@@ -494,7 +488,7 @@ class CampaignEventCRUDL(SmartCRUDL):
     class Create(OrgPermsMixin, ModalMixin, SmartCreateView):
 
         default_fields = ["event_type", "flow_to_start", "offset", "unit", "direction", "relative_to", "delivery_hour"]
-        form_class = EventForm
+        form_class = CampaignEventForm
         success_message = ""
         template_name = "campaigns/campaignevent_update.haml"
 
@@ -541,3 +535,6 @@ class CampaignEventCRUDL(SmartCRUDL):
             obj.campaign = Campaign.objects.get(org=self.request.user.get_org(), pk=self.request.GET.get("campaign"))
             self.form.pre_save(self.request, obj)
             return obj
+
+        def form_invalid(self, form):
+            return super().form_invalid(form)

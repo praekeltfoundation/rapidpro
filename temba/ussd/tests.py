@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from mock import patch
 
 from django.conf import settings
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.utils import timezone
 
 from temba.channels.models import Channel
@@ -20,7 +20,6 @@ from .models import USSDSession
 
 
 class USSDSessionTest(TembaTest):
-
     def setUp(self):
         super().setUp()
 
@@ -450,7 +449,6 @@ class USSDSessionTest(TembaTest):
 
 
 class JunebugUSSDTest(JunebugTestMixin, TembaTest):
-
     def setUp(self):
         super().setUp()
 
