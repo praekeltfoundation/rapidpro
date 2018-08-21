@@ -6,7 +6,7 @@ import tempfile
 import responses
 
 from django.core.management import call_command
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 
 from temba.tests import TembaTest
 
@@ -14,7 +14,6 @@ from .models import AdminBoundary
 
 
 class LocationTest(TembaTest):
-
     def test_boundaries(self):
         self.login(self.admin)
 
@@ -191,7 +190,6 @@ class LocationTest(TembaTest):
 
 
 class DownloadGeoJsonTest(TembaTest):
-
     def setUp(self):
         responses.add(
             responses.GET,

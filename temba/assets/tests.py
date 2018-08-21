@@ -1,4 +1,4 @@
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 
 from temba.contacts.models import ExportContactsTask
 from temba.flows.models import ExportFlowResultsTask
@@ -7,7 +7,6 @@ from temba.tests import TembaTest
 
 
 class AssetTest(TembaTest):
-
     def tearDown(self):
         self.clear_storage()
 

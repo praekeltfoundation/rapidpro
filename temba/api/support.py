@@ -1,11 +1,10 @@
 import logging
 
 from rest_framework import exceptions, status
-from rest_framework.authentication import TokenAuthentication
+from rest_framework.authentication import BasicAuthentication, TokenAuthentication
 from rest_framework.exceptions import APIException
 from rest_framework.renderers import BrowsableAPIRenderer
 from rest_framework.throttling import ScopedRateThrottle
-from rest_framework.views import exception_handler
 
 from django.conf import settings
 from django.http import HttpResponseServerError
@@ -24,6 +23,7 @@ class APITokenAuthentication(TokenAuthentication):
 
         Authorization: Token 401f7ac837da42b97f613d789819ff93537bee6a
     """
+
     model = APIToken
 
     def authenticate_credentials(self, key):
@@ -38,7 +38,34 @@ class APITokenAuthentication(TokenAuthentication):
 
             return token.user, token
 
-        raise exceptions.AuthenticationFailed("User inactive or deleted")
+        raise exceptions.AuthenticationFailed("Invalid token")
+
+
+class APIBasicAuthentication(BasicAuthentication):
+    """
+    Basic authentication.
+
+    Clients should authenticate using HTTP Basic Authentication.
+
+    Credentials: username:api_token
+    """
+
+    def authenticate_credentials(self, userid, password, request=None):
+        try:
+            token = APIToken.objects.get(is_active=True, key=password)
+        except APIToken.DoesNotExist:
+            raise exceptions.AuthenticationFailed("Invalid token or email")
+
+        if token.user.username != userid:
+            raise exceptions.AuthenticationFailed("Invalid token or email")
+
+        if token.user.is_active:
+            # set the org on this user
+            token.user.set_org(token.org)
+
+            return token.user, token
+
+        raise exceptions.AuthenticationFailed("Invalid token or email")
 
 
 class OrgRateThrottle(ScopedRateThrottle):
@@ -48,7 +75,7 @@ class OrgRateThrottle(ScopedRateThrottle):
 
     def get_cache_key(self, request, view):
         ident = None
-        if request.user.is_authenticated():
+        if request.user.is_authenticated:
             org = request.user.get_org()
             if org:
                 ident = org.pk
@@ -98,6 +125,7 @@ class InvalidQueryError(APIException):
     """
     Exception class for invalid queries in list endpoints
     """
+
     status_code = status.HTTP_400_BAD_REQUEST
 
 
@@ -105,6 +133,8 @@ def temba_exception_handler(exc, context):
     """
     Custom exception handler which prevents responding to API requests that error with an HTML error page
     """
+    from rest_framework.views import exception_handler
+
     response = exception_handler(exc, context)
 
     if response or not getattr(settings, "REST_HANDLE_EXCEPTIONS", False):

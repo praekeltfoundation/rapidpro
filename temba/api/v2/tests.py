@@ -1,3 +1,4 @@
+import base64
 import json
 from datetime import datetime
 from urllib.parse import quote_plus
@@ -12,13 +13,14 @@ from rest_framework.test import APIClient
 from django.conf import settings
 from django.contrib.auth.models import Group
 from django.contrib.gis.geos import GEOSGeometry
-from django.core.urlresolvers import reverse
 from django.db import connection
 from django.db.models import Q
 from django.test import override_settings
+from django.urls import reverse
 from django.utils import timezone
 
 from temba.api.models import APIToken, Resthook, WebHookEvent
+from temba.archives.models import Archive
 from temba.campaigns.models import Campaign, CampaignEvent, EventFire
 from temba.channels.models import Channel, ChannelEvent
 from temba.contacts.models import Contact, ContactField, ContactGroup
@@ -36,7 +38,6 @@ NUM_BASE_REQUEST_QUERIES = 7  # number of db queries required for any API reques
 
 
 class APITest(TembaTest):
-
     def setUp(self):
         super().setUp()
 
@@ -160,7 +161,9 @@ class APITest(TembaTest):
 
     def test_serializer_fields(self):
         group = self.create_group("Customers")
-        field_obj = ContactField.get_or_create(self.org, self.admin, "registered", "Registered On")
+        field_obj = ContactField.get_or_create(
+            self.org, self.admin, "registered", "Registered On", value_type=Value.TYPE_DATETIME
+        )
         flow = self.create_flow()
         campaign = Campaign.create(self.org, self.admin, "Reminders #1", group)
         event = CampaignEvent.create_flow_event(
@@ -173,22 +176,22 @@ class APITest(TembaTest):
         self.assertRaises(serializers.ValidationError, field.to_internal_value, list(range(101)))  # too long
 
         field = fields.CampaignField(source="test")
-        field.context = {"org": self.org}
+        field._context = {"org": self.org}
 
         self.assertEqual(field.to_internal_value(campaign.uuid), campaign)
         self.assertRaises(serializers.ValidationError, field.to_internal_value, {"id": 3})  # not a string or int
 
         field = fields.CampaignEventField(source="test")
-        field.context = {"org": self.org}
+        field._context = {"org": self.org}
 
         self.assertEqual(field.to_internal_value(event.uuid), event)
 
-        field.context = {"org": self.org2}
+        field._context = {"org": self.org2}
 
         self.assertRaises(serializers.ValidationError, field.to_internal_value, event.uuid)
 
         field = fields.ChannelField(source="test")
-        field.context = {"org": self.org}
+        field._context = {"org": self.org}
 
         self.assertEqual(field.to_internal_value(self.channel.uuid), self.channel)
         self.channel.is_active = False
@@ -196,42 +199,45 @@ class APITest(TembaTest):
         self.assertRaises(serializers.ValidationError, field.to_internal_value, self.channel.uuid)
 
         field = fields.ContactField(source="test")
-        field.context = {"org": self.org}
+        field._context = {"org": self.org}
 
         self.assertEqual(field.to_internal_value(self.joe.uuid), self.joe)
         self.assertRaises(serializers.ValidationError, field.to_internal_value, [self.joe.uuid, self.frank.uuid])
 
         field = fields.ContactField(source="test", many=True)
-        field.child_relation.context = {"org": self.org}
+        field._context = {"org": self.org}
 
         self.assertEqual(field.to_internal_value([self.joe.uuid, self.frank.uuid]), [self.joe, self.frank])
         self.assertRaises(serializers.ValidationError, field.to_internal_value, self.joe.uuid)
 
         field = fields.ContactGroupField(source="test")
-        field.context = {"org": self.org}
+        field._context = {"org": self.org}
 
         self.assertEqual(field.to_internal_value(group.uuid), group)
 
         field = fields.ContactFieldField(source="test")
-        field.context = {"org": self.org}
+        field._context = {"org": self.org}
 
         self.assertEqual(field.to_internal_value("registered"), field_obj)
         self.assertRaises(serializers.ValidationError, field.to_internal_value, "xyx")
 
+        field_created_on = self.org.contactfields.get(key="created_on")
+        self.assertEqual(field.to_internal_value("created_on"), field_created_on)
+
         field = fields.FlowField(source="test")
-        field.context = {"org": self.org}
+        field._context = {"org": self.org}
 
         self.assertEqual(field.to_internal_value(flow.uuid), flow)
 
         field = fields.URNField(source="test")
-        field.context = {"org": self.org}
+        field._context = {"org": self.org}
 
         self.assertEqual(field.to_internal_value("tel:+1-800-123-4567"), "tel:+18001234567")
         self.assertRaises(serializers.ValidationError, field.to_internal_value, "12345")  # un-parseable
         self.assertRaises(serializers.ValidationError, field.to_internal_value, "tel:800-123-4567")  # no country code
 
         field = fields.TranslatableField(source="test", max_length=10)
-        field.context = {"org": self.org}
+        field._context = {"org": self.org}
 
         self.assertEqual(field.to_internal_value("Hello"), ({"base": "Hello"}, "base"))
         self.assertEqual(field.to_internal_value({"base": "Hello"}), ({"base": "Hello"}, "base"))
@@ -257,13 +263,21 @@ class APITest(TembaTest):
         )  # base lang not provided
 
     def test_authentication(self):
-
         def api_request(endpoint, token):
             return self.client.get(
-                endpoint + ".json",
+                f"{endpoint}.json",
                 content_type="application/json",
                 HTTP_X_FORWARDED_HTTPS="https",
-                HTTP_AUTHORIZATION="Token %s" % token,
+                HTTP_AUTHORIZATION=f"Token {token}",
+            )
+
+        def api_request_basic_auth(endpoint, username, token):
+            credentials_base64 = base64.encodebytes(f"{username}:{token}".encode()).decode()
+            return self.client.get(
+                f"{endpoint}.json",
+                content_type="application/json",
+                HTTP_X_FORWARDED_HTTPS="https",
+                HTTP_AUTHORIZATION=f"Basic {credentials_base64}",
             )
 
         contacts_url = reverse("api.v2.contacts")
@@ -273,19 +287,36 @@ class APITest(TembaTest):
         response = api_request(contacts_url, "1234567890")
         self.assertResponseError(response, None, "Invalid token", status_code=403)
 
+        # can't fetch endpoint with invalid token
+        response = api_request_basic_auth(contacts_url, self.admin.username, "1234567890")
+        self.assertResponseError(response, None, "Invalid token or email", status_code=403)
+
         token1 = APIToken.get_or_create(self.org, self.admin, Group.objects.get(name="Administrators"))
         token2 = APIToken.get_or_create(self.org, self.admin, Group.objects.get(name="Surveyors"))
 
+        # can't fetch endpoint with invalid username
+        response = api_request_basic_auth(contacts_url, "some@name.com", token1.key)
+        self.assertResponseError(response, None, "Invalid token or email", status_code=403)
+
         # can fetch campaigns endpoint with valid admin token
         response = api_request(campaigns_url, token1.key)
+        self.assertEqual(response.status_code, 200)
+
+        response = api_request_basic_auth(campaigns_url, self.admin.username, token1.key)
         self.assertEqual(response.status_code, 200)
 
         # but not with surveyor token
         response = api_request(campaigns_url, token2.key)
         self.assertResponseError(response, None, "You do not have permission to perform this action.", status_code=403)
 
+        response = api_request_basic_auth(campaigns_url, self.admin.username, token2.key)
+        self.assertResponseError(response, None, "You do not have permission to perform this action.", status_code=403)
+
         # but it can be used to access the contacts endpoint
         response = api_request(contacts_url, token2.key)
+        self.assertEqual(response.status_code, 200)
+
+        response = api_request_basic_auth(contacts_url, self.admin.username, token2.key)
         self.assertEqual(response.status_code, 200)
 
         # if user loses access to the token's role, don't allow the request
@@ -293,14 +324,19 @@ class APITest(TembaTest):
         self.org.surveyors.add(self.admin)
 
         self.assertEqual(api_request(campaigns_url, token1.key).status_code, 403)
+        self.assertEqual(api_request_basic_auth(campaigns_url, self.admin.username, token1.key).status_code, 403)
         self.assertEqual(api_request(contacts_url, token2.key).status_code, 200)  # other token unaffected
+        self.assertEqual(api_request_basic_auth(contacts_url, self.admin.username, token2.key).status_code, 200)
 
         # and if user is inactive, disallow the request
         self.admin.is_active = False
         self.admin.save()
 
         response = api_request(contacts_url, token2.key)
-        self.assertResponseError(response, None, "User inactive or deleted", status_code=403)
+        self.assertResponseError(response, None, "Invalid token", status_code=403)
+
+        response = api_request_basic_auth(contacts_url, self.admin.username, token2.key)
+        self.assertResponseError(response, None, "Invalid token or email", status_code=403)
 
     @override_settings(SECURE_PROXY_SSL_HEADER=("HTTP_X_FORWARDED_HTTPS", "https"))
     def test_root(self):
@@ -550,13 +586,19 @@ class APITest(TembaTest):
 
         reporters = self.create_group("Reporters", [self.joe, self.frank])
 
-        bcast1 = Broadcast.create(self.org, self.admin, "Hello 1", [self.frank.get_urn("twitter")])
-        bcast2 = Broadcast.create(self.org, self.admin, "Hello 2", [self.joe])
-        bcast3 = Broadcast.create(self.org, self.admin, "Hello 3", [self.frank], status="S")
+        bcast1 = Broadcast.create(self.org, self.admin, "Hello 1", urns=[self.frank.get_urn("twitter")])
+        bcast2 = Broadcast.create(self.org, self.admin, "Hello 2", contacts=[self.joe])
+        bcast3 = Broadcast.create(self.org, self.admin, "Hello 3", contacts=[self.frank], status="S")
         bcast4 = Broadcast.create(
-            self.org, self.admin, "Hello 4", [self.frank.get_urn("twitter"), self.joe, reporters], status="F"
+            self.org,
+            self.admin,
+            "Hello 4",
+            urns=[self.frank.get_urn("twitter")],
+            contacts=[self.joe],
+            groups=[reporters],
+            status="F",
         )
-        Broadcast.create(self.org2, self.admin2, "Different org...", [self.hans])
+        Broadcast.create(self.org2, self.admin2, "Different org...", contacts=[self.hans])
 
         # no filtering
         with self.assertNumQueries(NUM_BASE_REQUEST_QUERIES + 4):
@@ -643,6 +685,129 @@ class APITest(TembaTest):
             "non_field_errors",
             "Sorry, your account is currently suspended. To enable " "sending messages, please contact support.",
         )
+
+    def test_archives(self):
+        url = reverse("api.v2.archives")
+
+        self.assertEndpointAccess(url)
+
+        # create some archives
+        Archive.objects.create(
+            org=self.org,
+            start_date=datetime(2017, 4, 5),
+            build_time=12,
+            record_count=34,
+            size=345,
+            hash="feca9988b7772c003204a28bd741d0d0",
+            archive_type=Archive.TYPE_MSG,
+            period=Archive.PERIOD_DAILY,
+        )
+        may_archive = Archive.objects.create(
+            org=self.org,
+            start_date=datetime(2017, 5, 5),
+            build_time=12,
+            record_count=34,
+            size=345,
+            hash="feca9988b7772c003204a28bd741d0d0",
+            archive_type=Archive.TYPE_MSG,
+            period=Archive.PERIOD_MONTHLY,
+        )
+        Archive.objects.create(
+            org=self.org,
+            start_date=datetime(2017, 6, 5),
+            build_time=12,
+            record_count=34,
+            size=345,
+            hash="feca9988b7772c003204a28bd741d0d0",
+            archive_type=Archive.TYPE_FLOWRUN,
+            period=Archive.PERIOD_DAILY,
+        )
+        Archive.objects.create(
+            org=self.org,
+            start_date=datetime(2017, 7, 5),
+            build_time=12,
+            record_count=34,
+            size=345,
+            hash="feca9988b7772c003204a28bd741d0d0",
+            archive_type=Archive.TYPE_FLOWRUN,
+            period=Archive.PERIOD_MONTHLY,
+        )
+        # this archive has been rolled up and it should not be included in the API responses
+        Archive.objects.create(
+            org=self.org,
+            start_date=datetime(2017, 5, 1),
+            build_time=12,
+            record_count=34,
+            size=345,
+            hash="feca9988b7772c003204a28bd741d0d0",
+            archive_type=Archive.TYPE_FLOWRUN,
+            period=Archive.PERIOD_DAILY,
+            rollup_id=may_archive.id,
+        )
+
+        # create archive for other org
+        Archive.objects.create(
+            org=self.org2,
+            start_date=datetime(2017, 5, 1),
+            build_time=12,
+            record_count=34,
+            size=345,
+            hash="feca9988b7772c003204a28bd741d123",
+            archive_type=Archive.TYPE_FLOWRUN,
+            period=Archive.PERIOD_DAILY,
+        )
+
+        response = self.fetchJSON(url)
+        resp_json = response.json()
+
+        self.assertEqual(response.status_code, 200)
+        # there should be 4 archives in the response, because one has been rolled up
+        self.assertEqual(len(resp_json["results"]), 4)
+        self.assertEqual(
+            resp_json["results"][0],
+            {
+                "archive_type": "run",
+                "download_url": "",
+                "hash": "feca9988b7772c003204a28bd741d0d0",
+                "period": "monthly",
+                "record_count": 34,
+                "size": 345,
+                "start_date": "2017-07-05",
+            },
+        )
+
+        response = self.fetchJSON(url, query="after=2017-05-01")
+        resp_json = response.json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(resp_json["results"]), 3)
+
+        response = self.fetchJSON(url, query="after=2017-05-01&archive_type=run")
+        resp_json = response.json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(resp_json["results"]), 2)
+
+        # unknown archive type
+        response = self.fetchJSON(url, query="after=2017-05-01&archive_type=!!!unknown!!!")
+        resp_json = response.json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(resp_json["results"]), 0)
+
+        # only for dailies
+        response = self.fetchJSON(url, query="after=2017-05-01&archive_type=run&period=daily")
+        resp_json = response.json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(resp_json["results"]), 1)
+
+        # only for monthlies
+        response = self.fetchJSON(url, query="period=monthly")
+        resp_json = response.json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(resp_json["results"]), 2)
 
     def test_campaigns(self):
         url = reverse("api.v2.campaigns")
@@ -736,6 +901,7 @@ class APITest(TembaTest):
         registration = ContactField.get_or_create(
             self.org, self.admin, "registration", "Registration", value_type=Value.TYPE_DATETIME
         )
+        field_created_on = self.org.contactfields.get(key="created_on")
 
         # create our contact and set a registration date
         contact = self.create_contact("Joe", "+12065551515")
@@ -758,8 +924,15 @@ class APITest(TembaTest):
             self.org, self.admin, campaign2, registration, 6, CampaignEvent.UNIT_HOURS, flow, delivery_hour=12
         )
 
+        campaign3 = Campaign.create(self.org, self.admin, "Alerts", reporters)
+        event3 = CampaignEvent.create_flow_event(
+            self.org, self.admin, campaign3, field_created_on, 6, CampaignEvent.UNIT_HOURS, flow, delivery_hour=12
+        )
+
         # create event for another org
-        joined = ContactField.get_or_create(self.org2, self.admin2, "joined", "Joined On")
+        joined = ContactField.get_or_create(
+            self.org2, self.admin2, "joined", "Joined On", value_type=Value.TYPE_DATETIME
+        )
         spammers = ContactGroup.get_or_create(self.org2, self.admin2, "Spammers")
         spam = Campaign.create(self.org2, self.admin2, "Cool stuff", spammers)
         CampaignEvent.create_flow_event(
@@ -773,10 +946,21 @@ class APITest(TembaTest):
         resp_json = response.json()
         self.assertEqual(response.status_code, 200)
         self.assertEqual(resp_json["next"], None)
-        self.assertResultsByUUID(response, [event2, event1])
+        self.assertResultsByUUID(response, [event3, event2, event1])
         self.assertEqual(
             resp_json["results"],
             [
+                {
+                    "uuid": event3.uuid,
+                    "campaign": {"uuid": campaign3.uuid, "name": "Alerts"},
+                    "relative_to": {"key": "created_on", "label": "Created On"},
+                    "offset": 6,
+                    "unit": "hours",
+                    "delivery_hour": 12,
+                    "flow": {"uuid": flow.uuid, "name": "Color Flow"},
+                    "message": None,
+                    "created_on": format_datetime(event3.created_on),
+                },
                 {
                     "uuid": event2.uuid,
                     "campaign": {"uuid": campaign2.uuid, "name": "Notifications"},
@@ -877,6 +1061,29 @@ class APITest(TembaTest):
         self.assertEqual(event1.unit, "W")
         self.assertEqual(event1.delivery_hour, -1)
         self.assertEqual(event1.message, {"base": "Nice job"})
+        self.assertIsNotNone(event1.flow)
+
+        response = self.postJSON(
+            url,
+            None,
+            {
+                "campaign": campaign1.uuid,
+                "relative_to": "created_on",
+                "offset": 15,
+                "unit": "days",
+                "delivery_hour": -1,
+                "message": "Nice unit of work",
+            },
+        )
+        self.assertEqual(response.status_code, 201)
+
+        event1 = CampaignEvent.objects.filter(campaign=campaign1).order_by("-id").first()
+        self.assertEqual(event1.event_type, CampaignEvent.TYPE_MESSAGE)
+        self.assertEqual(event1.relative_to, field_created_on)
+        self.assertEqual(event1.offset, 15)
+        self.assertEqual(event1.unit, "D")
+        self.assertEqual(event1.delivery_hour, -1)
+        self.assertEqual(event1.message, {"base": "Nice unit of work"})
         self.assertIsNotNone(event1.flow)
 
         # create a flow event
@@ -987,8 +1194,7 @@ class APITest(TembaTest):
         response = self.deleteJSON(url, "uuid=%s" % event1.uuid)
         self.assertEqual(response.status_code, 204)
 
-        event1.refresh_from_db()
-        self.assertFalse(event1.is_active)
+        self.assertFalse(CampaignEvent.objects.filter(id=event1.id).exists())
 
         # should no longer have any events
         self.assertEqual(1, EventFire.objects.filter(contact=contact, event=event2).count())
@@ -1204,7 +1410,7 @@ class APITest(TembaTest):
         response = self.postJSON(url, None, {})
         self.assertEqual(response.status_code, 201)
 
-        empty = Contact.objects.get(name=None)
+        empty = Contact.objects.get(name=None, is_active=True)
 
         self.assertEqual(
             response.json(),
@@ -1271,11 +1477,12 @@ class APITest(TembaTest):
             },
         )
         self.assertResponseError(response, "language", "Ensure this field has no more than 3 characters.")
-        self.assertResponseError(
-            response, "urns", "Invalid URN: 1234556789. Ensure phone numbers contain country codes."
-        )
         self.assertResponseError(response, "groups", "No such object: 59686b4e-14bc-4160-9376-b649b218c806")
         self.assertResponseError(response, "fields", "Invalid contact field key: hmmm")
+
+        self.assertEqual(
+            response.json()["urns"], {"0": ["Invalid URN: 1234556789. Ensure phone numbers contain country codes."]}
+        )
 
         # update an existing contact by UUID but don't provide any fields
         response = self.postJSON(url, "uuid=%s" % jean.uuid, {})
@@ -1384,10 +1591,11 @@ class APITest(TembaTest):
         self.assertEqual(response.status_code, 201)
 
         # delete a contact by URN (which should be normalized)
+        xavier = Contact.objects.get(name="Xavier")
         response = self.deleteJSON(url, "urn=%s" % quote_plus("twitter:XAVIER"))
         self.assertEqual(response.status_code, 204)
 
-        xavier = Contact.objects.get(name="Xavier")
+        xavier.refresh_from_db()
         self.assertFalse(xavier.is_active)
 
         # try deleting a contact by a non-existent URN
@@ -1511,7 +1719,7 @@ class APITest(TembaTest):
         self.assertEndpointAccess(url, fetch_returns=405)
 
         # create some contacts to act on
-        Contact.objects.all().delete()
+        self.releaseContacts(delete=True)
         contact1 = self.create_contact("Ann", "+250788000001")
         contact2 = self.create_contact("Bob", "+250788000002")
         contact3 = self.create_contact("Cat", "+250788000003")
@@ -1818,7 +2026,7 @@ class APITest(TembaTest):
         response = self.postJSON(url, None, {"label": "Age", "value_type": "numeric"})
         self.assertEqual(response.status_code, 201)
 
-        age = ContactField.objects.get(org=self.org, label="Age", value_type="N", is_active=True)
+        age = ContactField.user_fields.get(org=self.org, label="Age", value_type="N", is_active=True)
 
         # update a field by its key
         response = self.postJSON(url, "key=age", {"label": "Real Age", "value_type": "datetime"})
@@ -1832,7 +2040,7 @@ class APITest(TembaTest):
         response = self.postJSON(url, "key=not_ours", {"label": "Something", "value_type": "text"})
         self.assert404(response)
 
-        ContactField.objects.all().delete()
+        ContactField.user_fields.all().delete()
 
         for i in range(ContactField.MAX_ORG_CONTACTFIELDS):
             ContactField.get_or_create(self.org, self.admin, "field%d" % i, "Field%d" % i)
@@ -2052,7 +2260,7 @@ class APITest(TembaTest):
         response = self.deleteJSON(url, "uuid=%s" % spammers.uuid)
         self.assert404(response)
 
-        ContactGroup.user_groups.all().delete()
+        self.release(ContactGroup.user_groups.all())
 
         for i in range(ContactGroup.MAX_ORG_CONTACTGROUPS):
             ContactGroup.create_static(self.org2, self.admin2, "group%d" % i)
@@ -2169,9 +2377,8 @@ class APITest(TembaTest):
         response = self.deleteJSON(url, "uuid=%s" % spam.uuid)
         self.assert404(response)
 
-        Label.all_objects.all().delete()
-
-        for i in range(Label.MAX_ORG_LABELS):
+        starting = Label.all_objects.all().count()
+        for i in range(Label.MAX_ORG_LABELS - starting + 1):
             Label.get_or_create(self.org, self.user, "label%d" % i)
 
         response = self.postJSON(url, None, {"name": "Interesting"})
@@ -2350,7 +2557,7 @@ class APITest(TembaTest):
         self.assertResultsById(response, [joe_msg3, frank_msg1])
 
         # filter by broadcast
-        broadcast = Broadcast.create(self.org, self.user, "A beautiful broadcast", [self.joe, self.frank])
+        broadcast = Broadcast.create(self.org, self.user, "A beautiful broadcast", contacts=[self.joe, self.frank])
         broadcast.send()
         response = self.fetchJSON(url, "broadcast=%s" % broadcast.pk)
 
@@ -2574,6 +2781,8 @@ class APITest(TembaTest):
                         "category": "Blue",
                         "node": color_ruleset.uuid,
                         "time": format_datetime(iso8601.parse_date(joe_run1.results["color"]["created_on"])),
+                        "name": "color",
+                        "input": "it is blue",
                     }
                 },
                 "created_on": format_datetime(joe_run1.created_on),
@@ -2742,12 +2951,12 @@ class APITest(TembaTest):
         self.assertEqual(set(Msg.objects.filter(visibility=Msg.VISIBILITY_VISIBLE)), {msg1})
         self.assertEqual(set(Msg.objects.filter(visibility=Msg.VISIBILITY_ARCHIVED)), {msg2, msg3})
 
-        # delete messages 2 and 4
+        # delete messages 2
         response = self.postJSON(url, None, {"messages": [msg2.id], "action": "delete"})
         self.assertEqual(response.status_code, 204)
         self.assertEqual(set(Msg.objects.filter(visibility=Msg.VISIBILITY_VISIBLE)), {msg1})
         self.assertEqual(set(Msg.objects.filter(visibility=Msg.VISIBILITY_ARCHIVED)), {msg3})
-        self.assertEqual(set(Msg.objects.filter(visibility=Msg.VISIBILITY_DELETED)), {msg2})
+        self.assertFalse(Msg.objects.filter(id=msg2.id).exists())
 
         # try to act on a deleted message
         response = self.postJSON(url, None, {"messages": [msg2.id], "action": "restore"})

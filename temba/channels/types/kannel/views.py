@@ -11,7 +11,6 @@ from ...views import ALL_COUNTRIES, ClaimViewMixin
 
 
 class ClaimView(ClaimViewMixin, SmartFormView):
-
     class KannelClaimForm(ClaimViewMixin.Form):
         number = forms.CharField(
             max_length=14,
@@ -45,7 +44,9 @@ class ClaimView(ClaimViewMixin, SmartFormView):
             ),
         )
         encoding = forms.ChoiceField(
-            Channel.ENCODING_CHOICES, label=_("Encoding"), help_text=_("What encoding to use for outgoing messages")
+            choices=Channel.ENCODING_CHOICES,
+            label=_("Encoding"),
+            help_text=_("What encoding to use for outgoing messages"),
         )
         verify_ssl = forms.BooleanField(
             initial=True,

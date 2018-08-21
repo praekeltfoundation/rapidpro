@@ -38,10 +38,11 @@ class AssetDownloadView(SmartTemplateView):
     """
     Provides a landing page for an asset, e.g. /assets/download/contact_export/123/
     """
+
     template_name = "assets/asset_read.haml"
 
     def has_permission(self, request, *args, **kwargs):
-        return self.request.user.is_authenticated()
+        return self.request.user.is_authenticated
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -73,7 +74,7 @@ class AssetStreamView(SmartView, View):
     """
 
     def has_permission(self, request, *args, **kwargs):
-        return self.request.user.is_authenticated()
+        return self.request.user.is_authenticated
 
     def get(self, request, *args, **kwargs):
         asset_store = get_asset_store(kwargs.pop("type"))
