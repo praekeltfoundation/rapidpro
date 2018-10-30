@@ -9,11 +9,11 @@ from django.utils import timezone
 from celery.task import task
 
 from temba.flows.models import FLOW_BATCH
-from temba.msgs.models import BROADCAST_BATCH, HANDLE_EVENT_TASK, HANDLER_QUEUE, TIMEOUT_EVENT, Broadcast, Msg
+from temba.msgs.models import BROADCAST_BATCH, HANDLE_EVENT_TASK, TIMEOUT_EVENT, Broadcast, Msg
 from temba.orgs.models import Org
 from temba.utils.cache import QueueRecord
 from temba.utils.dates import datetime_to_epoch
-from temba.utils.queues import complete_task, nonoverlapping_task, push_task, start_task
+from temba.utils.queues import Queue, complete_task, nonoverlapping_task, push_task, start_task
 
 from .models import (
     ExportFlowResultsTask,
@@ -58,7 +58,9 @@ def check_flows_task():
     """
     See if any flow runs need to be expired
     """
-    runs = FlowRun.objects.filter(is_active=True, expires_on__lte=timezone.now()).order_by("expires_on")
+    runs = FlowRun.objects.filter(
+        is_active=True, expires_on__lte=timezone.now(), org__flow_server_enabled=False
+    ).order_by("expires_on")
     FlowRun.bulk_exit(runs, FlowRun.EXIT_TYPE_EXPIRED)
 
 
@@ -70,7 +72,7 @@ def check_flow_timeouts_task():
     See if any flow runs have timed out
     """
     # find any runs that should have timed out
-    runs = FlowRun.objects.filter(is_active=True, timeout_on__lte=timezone.now())
+    runs = FlowRun.objects.filter(is_active=True, timeout_on__lte=timezone.now(), org__flow_server_enabled=False)
     runs = runs.only("id", "org", "timeout_on")
 
     queued_timeouts = QueueRecord("flow_timeouts", lambda r: "%d:%d" % (r.id, datetime_to_epoch(r.timeout_on)))
@@ -80,7 +82,7 @@ def check_flow_timeouts_task():
         if not queued_timeouts.is_queued(run):
             try:
                 task_payload = dict(type=TIMEOUT_EVENT, run=run.id, timeout_on=run.timeout_on)
-                push_task(run.org_id, HANDLER_QUEUE, HANDLE_EVENT_TASK, task_payload)
+                push_task(run.org_id, Queue.HANDLER, HANDLE_EVENT_TASK, task_payload)
 
                 queued_timeouts.set_queued([run])
             except Exception:  # pragma: no cover
@@ -183,9 +185,3 @@ def squash_flowruncounts():
     FlowCategoryCount.squash()
     FlowPathRecentRun.prune()
     FlowStartCount.squash()
-
-
-@task(track_started=True, name="release_flow_runs_task")
-def release_flow_runs_task(flow_id):
-    flow = Flow.objects.get(id=flow_id)
-    flow.release_runs()
