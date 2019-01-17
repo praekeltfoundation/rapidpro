@@ -29,6 +29,11 @@ class PublicTest(SmartminTest):
         with self.settings(BRANDING=branding):
             self.assertNotContains(self.client.get(home_url), "Create Account")
 
+        response = self.client.get(home_url + "?errors=&foo", follow=True)
+        self.assertEqual(response.request["PATH_INFO"], "/")
+        self.assertTrue(response.context["errors"])
+        self.assertFalse("error_msg" in response.context)
+
         # try to create a lead from the homepage
         lead_create_url = reverse("public.lead_create")
         post_data = dict()

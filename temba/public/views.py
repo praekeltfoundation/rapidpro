@@ -30,7 +30,9 @@ class IndexView(SmartTemplateView):
         context["errors"] = "errors" in self.request.GET
         context["allow_signups"] = self.request.branding.get("allow_signups", True)
         if context["errors"]:
-            context["error_msg"] = parse_qs(context["url_params"][1:])["errors"][0]
+            errors = parse_qs(context["url_params"][1:]).get("errors")
+            if isinstance(errors, list) and len(errors) > 0:
+                context["error_msg"] = errors[0]
 
         return context
 
