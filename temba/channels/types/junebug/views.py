@@ -15,12 +15,14 @@ class ClaimView(AuthenticatedExternalClaimView):
             max_length=14,
             min_length=4,
             label=_("Number"),
-            help_text=("The shortcode or phone number you are connecting."),
+            help_text=(
+                "The shortcode or phone number you are connecting. Make sure to include any preceeding symbols such as '*' if necessary."
+            ),
         )
         url = forms.URLField(
             label=_("URL"),
             help_text=_(
-                "The URL for the Junebug channel. ex: https://junebug.praekelt.org/jb/channels/3853bb51-d38a-4bca-b332-8a57c00f2a48/messages.json"
+                "The URL for the Junebug channel. ex: https://junebug.praekelt.org/jb/channels/3853bb51-d38a-4bca-b332-8a57c00f2a48/messages/"
             ),
         )
         username = forms.CharField(
