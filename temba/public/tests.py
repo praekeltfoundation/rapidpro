@@ -1,8 +1,7 @@
+import copy
 from unittest.mock import MagicMock
 
 from smartmin.tests import _CRUDLTest
-
-import copy
 
 from django.conf import settings
 from django.contrib.auth.models import User
