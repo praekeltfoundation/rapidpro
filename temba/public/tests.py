@@ -1,8 +1,7 @@
+import copy
 from unittest.mock import MagicMock
 
 from smartmin.tests import _CRUDLTest
-
-import copy
 
 from django.conf import settings
 from django.contrib.auth.models import User
@@ -32,7 +31,7 @@ class PublicTest(TembaTest):
 
         # check signup form not displayed if signups unavailable
         branding = copy.deepcopy(settings.BRANDING)
-        branding['rapidpro.io']['allow_signups'] = False
+        branding["rapidpro.io"]["allow_signups"] = False
         with self.settings(BRANDING=branding):
             self.assertNotContains(self.client.get(home_url), "Create Account")
 
