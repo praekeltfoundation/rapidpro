@@ -2,6 +2,8 @@
 -load smartmin sms temba compress humanize i18n
 -block page-title
   {{object.name}}
+  -if object.is_archived
+    -trans "(Archived)"
 
 -block title-icon
   .title-icon
@@ -10,7 +12,10 @@
 -block title-text
   .title-text
     %h1
-      {{title}}
+      {{object.name}}
+      -if object.is_archived
+        -trans "(Archived)"
+
     %h5
       .icon-users-2
       -if object.group.is_active
@@ -206,12 +211,3 @@
         modal.show();
       });
     {% endif %}
-
-   {% if org_perms.contacts.contact_update %}
-     $(".update-campaign").live('click', function(){
-       var modal = new Modax('{% trans "Update Campaign" %}','{% url "campaigns.campaign_update" object.pk %}');
-       modal.setIcon('icon-instant');
-       modal.setRedirectOnSuccess(true);
-       modal.show();
-     });
-   {% endif %}

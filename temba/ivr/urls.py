@@ -1,8 +1,12 @@
-from __future__ import unicode_literals
-
 from django.conf.urls import url
-from .views import CallHandler
+
+from temba.utils.views import MailroomURLHandler
 
 urlpatterns = [
-    url(r'^handle/(?P<pk>\d+)/$', CallHandler.as_view(), name='ivr.ivrcall_handle'),
+    # register a Mailroom placeholder URL which will error if ever accessed directly
+    url(
+        r"^mr/ivr/c/(?P<uuid>[0-9a-f-]+)/(?P<action>handle|status|incoming)$",
+        MailroomURLHandler.as_view(),
+        name="mailroom.ivr_handler",
+    )
 ]

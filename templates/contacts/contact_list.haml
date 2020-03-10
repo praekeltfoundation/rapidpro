@@ -1,5 +1,5 @@
 -extends "smartmin/list.html"
--load smartmin sms contacts
+-load smartmin sms contacts temba
 -load i18n humanize
 
 -block page-title
@@ -7,7 +7,7 @@
     {{current_group.name}}
   -else
     {{title}}
-  
+
 -block page-top
   {% render as page_top %}
     {{block.super}}
@@ -48,9 +48,13 @@
               - for group in groups
                 %li{'class':'{% if current_group.id == group.pk %}active{% endif %}'}
                   %a{'href':'{% url "contacts.contact_filter" group.uuid %}'}
-                    {{group.label}} ({{ group.count | intcomma }})
+                    -if group.is_ready
+                      {{group.label}} ({{ group.count | intcomma }})
+                    -else
+                      {{group.label}}
+                      %i.spin.icon-loop
 
-          %div{style:"margin-top: 10px"}
+          %div{style:"margin-top: 10px; margin-bottom:10px;"}
             - if org_perms.contacts.contact_create
               %a#add-contact.btn.btn-block
                 -trans "Create Contact"
@@ -126,16 +130,17 @@
                                   - trans "New Group..."
 
                       - if org_perms.msgs.broadcast_send and not reply_disabled
-                        %span.btn-group
-                          %button.send-button.btn{data-toggle:'tooltip', data-trigger:'hover', data-delay:"800", data-placement:'top', data-original-title:'{% trans "Send Message" %}'}
-                            .glyph.icon-bubble-replu
+                        %span{ style: "display: inline-block; margin-left: 5px"}
+                          %rp-modax#send-message-modal{ header:'{% trans "Send Message" %}', endpoint:"{% url 'msgs.broadcast_send' %}" }
+                            %button.send-button.btn{data-toggle:'tooltip', data-trigger:'hover', data-delay:"800", data-placement:'top', data-original-title:'{% trans "Send Message" %}'}
+                              .glyph.icon-bubble-replu
 
               .search-details
                 -if search_error
                   %span.search-error
                     =search_error
                 -elif search
-                  -blocktrans count results_count=paginator.count
+                  -blocktrans with results_count=paginator.count|intcomma count cc=paginator.count
                     Found {{ results_count }} contact matching <i>{{search}}</i>.
                     -plural
                       Found {{ results_count }} contacts matching <i>{{search}}</i>.
@@ -151,10 +156,41 @@
                     -for field in contact_fields
                       -if field.show_in_table
                         %th
-                          {{ field.label }}
+                          -if sort_field == field.key
+                            -if sort_direction == 'desc'
+                              %a{href:"?sort_on={{ field.key }}{% if search %}&search={{ search|escape }}{% endif %}"}
+                                %div
+                                  {{ field.label }}
+                                  %span.sort.icon.icon-arrow-down-2.sort-asc.visible
+                            -else
+                              %a{href:"?sort_on=-{{ field.key }}{% if search %}&search={{ search|escape }}{% endif %}"}
+                                %div
+                                  {{ field.label }}
+                                  %span.sort.icon.icon-arrow-up51.sort-desc.visible
+                          -else
+                            %a{href:"?sort_on=-{{ field.key }}{% if search %}&search={{ search|escape }}{% endif %}"}
+                              %div
+                                {{ field.label }}
+                                %span.sort.icon.icon-arrow-down-2.sort-desc
                     %th
                       - if object_list
-                        -trans "Created On"
+
+                        -if sort_field == 'created_on'
+                          -if sort_direction == 'desc'
+                            %a{href:"?sort_on=created_on{% if search %}&search={{ search|escape }}{% endif %}"}
+                              %div
+                                -trans "Created On"
+                                %span.sort.icon.icon-arrow-down-2.sort-asc.visible
+                          -else
+                            %a{href:"?sort_on=-created_on{% if search %}&search={{ search|escape }}{% endif %}"}
+                              %div
+                                -trans "Created On"
+                                %span.sort.icon.icon-arrow-up51.sort-desc.visible
+                        -else
+                          %a{href:"?sort_on=-created_on{% if search %}&search={{ search|escape }}{% endif %}"}
+                            %div
+                              -trans "Created On"
+                              %span.sort.icon.icon-arrow-down-2.sort-desc
 
                   %tbody
                     - for object in contacts
@@ -178,7 +214,7 @@
 
                         %td.value-received.field_received
                           %nobr
-                            {{ object.created_on|gmail_time }}
+                            {% format_datetime object.created_on %}
 
                         // This is needed for action buttons
                         %td.hide
@@ -201,9 +237,18 @@
 
 
               - block paginator
-                - if object_list.count
-                  .paginator
-                    - include "smartmin/sidebar_pagination.haml"
+                .paginator
+                  - include "smartmin/sidebar_pagination.haml"
+
+                -# are we using ES, and are we on the last page of the pagination and
+                - if paginator.is_es_search and not page_obj.has_next_page and page_obj.number == paginator.num_pages and paginator.count > 10000
+                  %div
+                    %p.span3
+
+                    %p.span6.pagination-notification
+                      -trans "Search browsing is limited to 10k results. If you want to browse through all of the results, please save this search as a group."
+
+                    %p.span3
 
         - else
           - include "contacts/empty_include.haml"
@@ -225,16 +270,35 @@
 
 -block extra-style
   :css
-
+    tr.contacts th a span.icon {
+      visibility: hidden;
+      text-decoration: none;
+      font-size: 14px;
+      margin-top: -1px;
+    }
+    tr.contacts th a {
+      text-decoration: none;
+      font-weight:200;
+      color: #aaa;
+    }
+    tr.contacts th:hover a span.icon {
+      visibility: visible;
+      font-size: 14px;
+    }
+    tr.contacts th a span.icon.visible {
+      visibility: visible;
+    }
     tr.contacts th {
       font-size:11px;
       height:10px;
       padding:0;
       padding-top:10px;
+      padding-left:14px;
       font-weight:200;
       color: #aaa;
       border:0px solid;
       text-align:center;
+      white-space: nowrap;
     }
 
     td.field {
@@ -258,11 +322,39 @@
       color: #da4f49;
     }
 
+    .pagination-notification {
+      background: #ecf0f1;
+      padding: 10px;
+    }
+
 
 -block extra-script
   {{ block.super }}
 
   :javascript
+
+      // wire our send button on load and on refresh
+    wireSendButton();
+    document.addEventListener('rp-refresh-complete', function() {
+      wireSendButton();
+    });
+
+    function wireSendButton() {
+      // when we click send, include any clicked messages in our modax request
+      var sendEndpoint = "{% url 'msgs.broadcast_send' %}";
+      var sendButton = document.querySelector(".send-button");
+      var sendModal = document.querySelector("#send-message-modal");
+      if (sendButton) {
+        sendButton.addEventListener('click', function(){
+          var ids = getCheckedUuids();
+          if (ids.length > 0) {
+            sendModal.setAttribute("endpoint", sendEndpoint + '?c=' + ids);
+          } else {
+            sendModal.setAttribute("endpoint", sendEndpoint);
+          }
+        });
+      }
+    }
 
     $(document).on('click', '.search-query', function() {
       $(this).animate({ width: '600px'}, 200);
@@ -280,18 +372,18 @@
     }
     {% endif %}
 
-    
+
     // keeps track if we are on a link or not
     var onLink = false;
 
     {% if org_perms.contacts.contact_update %}
-    
+
     function addContactToGroup(groupId){
       var contactIds = getCheckedIds();
       var groupedIds = getLabeledIds(groupId);
 
       var addGroup = true;
-    
+
       // find the intersection of contactIds and groupedIds
       var contactIdsWithGroup = intersect(contactIds, groupedIds);
 
@@ -302,7 +394,7 @@
       jQuery.ajaxSettings.traditional = true;
       fetchPJAXContent("", "#pjax", { postData: {objects: contactIds, label: groupId, add: addGroup, action: 'label', pjax: 'true'}, forceReload: true });
     }
-   
+
     {% endif %}
 
     {% if org_perms.contacts.contact_create %}
@@ -330,18 +422,7 @@
       modal.show()
     }
     {% endif %}
-    
 
-    {% if org_perms.msgs.broadcast_send %}
-    $(".send-button").click(function(){
-      var contactsUuids = getCheckedUuids();
-      if (contactsUuids.length > 0) {
-        showComposeInitialized("c=" + contactsUuids);
-      } else {
-        showCompose();
-      }
-    });
-    {% endif %}
 
     {% if org_perms.contacts.contact_create %}
     $("#add-contact").live('click', function() { showCreateContactModal(); });
@@ -409,7 +490,7 @@
       modal.setRedirectOnSuccess(true);
       modal.show();
     {% else %}
-      var modal = new Modal('{% trans "Unable to create a dynamic group" %}','{% trans "You cannot create a dynamic group based on <strong>name</strong> or <strong>id</strong>." %}')
+      var modal = new Modal('{% trans "Unable to create a dynamic group" %}','{% trans "You cannot create a dynamic group based on <strong>id</strong> or <strong>group</strong>." %}')
       modal.setListeners({});
       modal.show();
     {% endif %}
@@ -418,17 +499,15 @@
 
     {% endif %}
 
-    {% if org_perms.contacts.contactfield_managefields %}
-    $('.page-content').on('click', ".manage-fields", function() {
-      lastChecked = getCheckedIds();
-      var modal = new Modax('{% trans "Manage Contact Fields" %}', '{% url "contacts.contactfield_managefields" %}');
-      modal.setIcon('icon-vcard');
+    {% if org_perms.contacts.contact_export %}
+    $(".export-contacts").live('click', function() {
+      var modal = new Modax('{% trans "Export Contacts" %}', '{{export_url}}');
       modal.setListeners({
-        onFormLoaded:function() {
-          useFontCheckbox("input[type=checkbox]", false);
-        },
-        onSuccess: function() { refresh(function() { recheckIds(); }, true); }
-      });
+        onSuccess: function() {
+          location.reload();
+        }
+      })
+      modal.setPrimaryButton('{% trans "Start Export" %}');
       modal.show();
     });
     {% endif %}

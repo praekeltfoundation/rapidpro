@@ -131,7 +131,7 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
 
   # fetch our flow to get started
   $scope.init = ->
-    Flow.fetch window.flowId, ->
+    Flow.fetch window.flowUUID, ->
       $scope.updateActivity()
       $scope.flow = Flow.flow
 
@@ -145,10 +145,10 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
     $scope.dialog = utils.openModal("/partials/modal", SimpleMessageController, resolveObj)
     return $scope.dialog
 
-  showConnectTransferTo = ->
-    modal = new ConfirmationModal(gettext("TransferTo Disconnected"), gettext("No TransferTo account connected. Please first connect your TransferTo account."))
+  showConnectDTOne = ->
+    modal = new ConfirmationModal(gettext("DT One Disconnected"), gettext("No DT One account connected. Please first connect your DT One account."))
     modal.addClass('airtime-warning')
-    modal.setPrimaryButton(gettext("Connect TransferTo Account"))
+    modal.setPrimaryButton(gettext("Connect DT One Account"))
     modal.setListeners
       onPrimary: ->
         document.location.href = window.connectAirtimeServiceURL
@@ -208,8 +208,8 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
         showDialog('Invalid Attachment', 'Attachments must be either video, audio, or an image.')
         return
 
-      if media_type == 'audio' and media_encoding != 'mp3'
-        showDialog('Invalid Format', 'Audio attachments must be encoded as mp3 files.')
+      if media_type == 'audio' and media_encoding not in ['mp3', 'm4a', 'x-m4a', 'wav', 'ogg', 'oga']
+        showDialog('Invalid Format', 'Audio attachments must be encoded as mp3, m4a, wav, ogg or oga files.')
         return
 
     if action.type in ['reply', 'send'] and (file.size > 20000000 or (file.name.endsWith('.jpg') and file.size > 500000))
@@ -267,7 +267,7 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
       if action.type in ['reply', 'send']
         if not action.media
           action.media = {}
-        action.media[Flow.language.iso_code] = file.type + ':' + data['path']
+        action.media[Flow.language.iso_code] = data['type'] + ':' + data['url']
 
       # make sure our translation state is updated
       action.uploading = false
@@ -316,11 +316,10 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
         $rootScope.is_starting = data.is_starting
 
         # to be successful we should be a 200 with activity data
-        if xhr.status == 200 and data.activity
+        if xhr.status == 200 and data.nodes
           $rootScope.activity =
-            active: data.activity
-            visited: data.visited
-
+            active: data.nodes
+            visited: data.segments
           if not window.simulation
             $rootScope.visibleActivity = $rootScope.activity
 
@@ -528,7 +527,7 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
 
     # show message asking to connect TransferTo account for existing airtime node
     if ruleset.ruleset_type == 'airtime' and not $rootScope.hasAirtimeService
-      showConnectTransferTo()
+      showConnectDTOne()
       return
 
     if Flow.language and Flow.flow.base_language != Flow.language.iso_code and not dragSource
@@ -840,9 +839,11 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
       if hovered.action_set
         action_set = hovered.action_set
         action_set._showMessages = true
+        action_set._messagesLoaded = false
 
         Flow.fetchRecentMessages([action_set.exit_uuid], action_set.destination).then (response) ->
           action_set._messages = response.data
+          action_set._messagesLoaded = true
 
       if hovered.category
 
@@ -853,10 +854,12 @@ app.controller 'FlowController', [ '$scope', '$rootScope', '$timeout', '$log', '
         # our node and rule should be marked as showing messages
         ruleset._showMessages = true
         category._showMessages = true
+        category._messagesLoaded = false
 
         # get all recent messages for all rules that make up this category
         Flow.fetchRecentMessages(category.sources, category.target).then (response) ->
           category._messages = response.data
+          category._messagesLoaded = true
     , 500
 
   $scope.clickShowActionMedia = ->
@@ -1225,14 +1228,14 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
   $scope.isRuleVisible = (rule) ->
     return flow.flow_type in rule._config.filter
 
-  $scope.getFlowsUrl = (flow) ->
+  $scope.getFlowsUrl = (exclude_current_flow, same_type) ->
     url = "/flow/?_format=select2"
-    if Flow.flow.flow_type == 'S'
-      return url + "&flow_type=S"
-    if Flow.flow.flow_type == 'F'
-      return url + "&flow_type=F&flow_type=V"
-    if Flow.flow.flow_type == 'V'
-      return url + "&flow_type=V"
+
+    if exclude_current_flow
+        url += '&exclude_flow_uuid='+ Flow.flow.metadata.uuid;
+    if same_type
+      url += "&flow_type=" + Flow.flow.flow_type
+
     return url
 
   $scope.isPausingRuleset = ->
@@ -2066,27 +2069,6 @@ NodeEditorController = ($rootScope, $scope, $modalInstance, $timeout, $log, Flow
     $scope.action.field = field.id
     $scope.action.label = field.text
     $scope.action.value = value
-
-    Flow.saveAction(actionset, $scope.action)
-    $modalInstance.close()
-
-  # save a webhook action
-  $scope.saveWebhook = (method, url) ->
-
-    if $scope.hasInvalidFields([url])
-      return
-
-    # don't include headers without name
-    webhook_headers = []
-    if $scope.action.webhook_headers
-      for header in $scope.action.webhook_headers
-        if header.name
-          webhook_headers.push(header)
-
-    $scope.action.type = 'api'
-    $scope.action.action = method
-    $scope.action.webhook = url
-    $scope.action.webhook_headers = webhook_headers
 
     Flow.saveAction(actionset, $scope.action)
     $modalInstance.close()

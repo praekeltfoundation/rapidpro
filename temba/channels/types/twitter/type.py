@@ -1,106 +1,73 @@
-from __future__ import unicode_literals, absolute_import
+import logging
 
-import six
-import time
-
+from django.forms import ValidationError
+from django.urls import reverse
 from django.utils.translation import ugettext_lazy as _
-from temba.contacts.models import Contact, TWITTER_SCHEME, TWITTERID_SCHEME, URN
-from temba.msgs.models import WIRED
-from temba.utils.twitter import TembaTwython
-from .views import ClaimView
-from ...models import Channel, ChannelType, SendException
-from ...tasks import MageStreamAction, notify_mage_task
-from ...views import UpdateTwitterForm
+
+from temba.contacts.models import TWITTER_SCHEME, TWITTERID_SCHEME
+
+from ...models import ChannelType
+from .client import TwitterClient
+from .views import ClaimView, UpdateForm
+
+logger = logging.getLogger(__name__)
 
 
 class TwitterType(ChannelType):
     """
-    A Twitter channel which uses Mage to stream DMs for a handle which has given access to a Twitter app configured for
-    this deployment.
+    A Twitter channel which uses Twitter's Account Activity API to send and receive direct messages.
     """
-    code = 'TT'
+
+    code = "TWT"
     category = ChannelType.Category.SOCIAL_MEDIA
 
+    courier_url = r"^twt/(?P<uuid>[a-z0-9\-]+)/receive$"
+
     name = "Twitter"
-    icon = 'icon-twitter'
+    icon = "icon-twitter"
 
-    claim_blurb = _("""Add a <a href="http://twitter.com">Twitter</a> account to send messages as direct messages.""")
+    claim_blurb = _(
+        """Send and receive messages on Twitter using their
+        <a href="https://developer.twitter.com/en/docs/accounts-and-users/subscribe-account-activity/overview">
+        Twitter Activity API.</a> You will have to apply for Twitter API access and create a Twitter application."""
+    )
     claim_view = ClaimView
-
-    update_form = UpdateTwitterForm
+    update_form = UpdateForm
 
     schemes = [TWITTER_SCHEME, TWITTERID_SCHEME]
-    max_length = 10000
     show_config_page = False
     free_sending = True
-    quick_reply_text_size = 36
+    async_activation = False
+    attachment_support = True
 
-    FATAL_403S = ("messages to this user right now",  # handle is suspended
-                  "users who are not following you")  # handle no longer follows us
+    redact_response_keys = {"urn"}
+    redact_request_keys = {"sender_id", "name", "screen_name", "profile_image_url", "profile_image_url_https"}
 
     def activate(self, channel):
-        # tell Mage to activate this channel
-        notify_mage_task.delay(channel.uuid, MageStreamAction.activate.name)
+        config = channel.config
+        client = TwitterClient(
+            config["api_key"], config["api_secret"], config["access_token"], config["access_token_secret"]
+        )
+
+        callback_url = "https://%s%s" % (channel.callback_domain, reverse("courier.twt", args=[channel.uuid]))
+        try:
+            # check for existing hooks, if there is just one, remove it
+            hooks = client.get_webhooks(config["env_name"])
+            if len(hooks) == 1:
+                client.delete_webhook(config["env_name"], hooks[0]["id"])
+
+            resp = client.register_webhook(config["env_name"], callback_url)
+            channel.config["webhook_id"] = resp["id"]
+            channel.save(update_fields=["config"])
+            client.subscribe_to_webhook(config["env_name"])
+        except Exception as e:  # pragma: no cover
+            logger.error(f"Unable to activate TwitterActivity: {str(e)}", exc_info=True)
+            raise ValidationError(e)
 
     def deactivate(self, channel):
-        # tell Mage to deactivate this channel
-        notify_mage_task.delay(channel.uuid, MageStreamAction.deactivate.name)
-
-    def send(self, channel, msg, text):
-        twitter = TembaTwython.from_channel(channel)
-        start = time.time()
-
-        try:
-            urn = getattr(msg, 'urn', URN.from_twitter(msg.urn_path))
-            (scheme, path, display) = URN.to_parts(urn)
-
-            # this is a legacy URN (no display), the path is our screen name
-            if scheme == TWITTER_SCHEME:
-                dm = twitter.send_direct_message(screen_name=path, text=text)
-                external_id = dm['id']
-
-            # this is a new twitterid URN, our path is our user id
-            else:
-                metadata = msg.metadata if hasattr(msg, 'metadata') else {}
-                quick_replies = metadata.get('quick_replies', [])
-                formatted_replies = [dict(label=item[:self.quick_reply_text_size]) for item in quick_replies]
-
-                if quick_replies:
-                    params = {
-                        'event': {
-                            'type': 'message_create',
-                            'message_create': {
-                                'target': {'recipient_id': path},
-                                'message_data': {
-                                    'text': text,
-                                    'quick_reply': {'type': 'options', 'options': formatted_replies}
-                                }
-                            }
-                        }
-                    }
-                    dm = twitter.post('direct_messages/events/new', params=params)
-                    external_id = dm['event']['id']
-                else:
-                    dm = twitter.send_direct_message(user_id=path, text=text)
-                    external_id = dm['id']
-
-        except Exception as e:
-            error_code = getattr(e, 'error_code', 400)
-            fatal = False
-
-            if error_code == 404:  # handle doesn't exist
-                fatal = True
-            elif error_code == 403:
-                for err in self.FATAL_403S:
-                    if six.text_type(e).find(err) >= 0:
-                        fatal = True
-                        break
-
-            # if message can never be sent, stop them contact
-            if fatal:
-                contact = Contact.objects.get(id=msg.contact)
-                contact.stop(contact.modified_by)
-
-            raise SendException(str(e), events=twitter.events, fatal=fatal, start=start)
-
-        Channel.success(channel, msg, WIRED, start, events=twitter.events, external_id=external_id)
+        config = channel.config
+        if "webhook_id" in config:
+            client = TwitterClient(
+                config["api_key"], config["api_secret"], config["access_token"], config["access_token_secret"]
+            )
+            client.delete_webhook(config["env_name"], config["webhook_id"])
