@@ -31,7 +31,13 @@ from temba.utils import dict_to_struct, json
 from temba.utils.dates import datetime_to_ms, ms_to_datetime
 
 from .models import Alert, Channel, ChannelCount, ChannelEvent, ChannelLog, SyncEvent
-from .tasks import check_channels_task, squash_channelcounts, sync_old_seen_channels_task, trim_sync_events_task
+from .tasks import (
+    check_channels_task,
+    squash_channelcounts,
+    sync_old_seen_channels_task,
+    track_org_channel_counts,
+    trim_sync_events_task,
+)
 
 
 class ChannelTest(TembaTest):
@@ -524,7 +530,6 @@ class ChannelTest(TembaTest):
 
         # test that editors have the channel of the the org the are using
         other_user = self.create_user("Other")
-        self.setUpSecondaryOrg()
         self.org2.administrators.add(other_user)
         self.org.editors.add(other_user)
         self.assertFalse(self.org2.channels.all())
@@ -1020,7 +1025,8 @@ class ChannelTest(TembaTest):
         # Nexmo delegate should have been released as well
         nexmo.refresh_from_db()
         self.assertFalse(nexmo.is_active)
-        self.releaseChannels(delete=True)
+
+        Channel.objects.all().delete()
 
         # check we queued session interrupt tasks for each channel
         mock_queue_interrupt.assert_has_calls(calls=[call(self.org, channel=nexmo), call(self.org, channel=android)])
@@ -1112,10 +1118,9 @@ class ChannelTest(TembaTest):
         self.assertFalse(channel.is_active)
 
     def test_quota_exceeded(self):
-        # set our org to be on the trial plan
-        self.org.plan = Org.PLAN_FREE
-        self.org.save(update_fields=("plan",))
+        # reduce out credits to 10
         self.org.topups.all().update(credits=10)
+        self.org.clear_credit_cache()
 
         self.assertEqual(10, self.org.get_credits_remaining())
         self.assertEqual(0, self.org.get_credits_used())
@@ -1273,7 +1278,12 @@ class ChannelTest(TembaTest):
                 dict(cmd="mt_fail", msg_id=msg5.pk, ts=date),
                 # a missed call
                 dict(cmd="call", phone="2505551212", type="miss", ts=date),
+                # repeated missed calls should be skipped
+                dict(cmd="call", phone="2505551212", type="miss", ts=date),
+                dict(cmd="call", phone="2505551212", type="miss", ts=date),
                 # incoming
+                dict(cmd="call", phone="2505551212", type="mt", dur=10, ts=date),
+                # repeated calls should be skipped
                 dict(cmd="call", phone="2505551212", type="mt", dur=10, ts=date),
                 # incoming, invalid URN
                 dict(cmd="call", phone="*", type="mt", dur=10, ts=date),
@@ -1312,6 +1322,9 @@ class ChannelTest(TembaTest):
 
         # We should now have one sync
         self.assertEqual(1, SyncEvent.objects.filter(channel=self.tel_channel).count())
+
+        # We should have 3 channel event
+        self.assertEqual(3, ChannelEvent.objects.filter(channel=self.tel_channel).count())
 
         # check our channel fcm and uuid were updated
         self.tel_channel = Channel.objects.get(pk=self.tel_channel.pk)
@@ -1589,6 +1602,51 @@ class ChannelTest(TembaTest):
 
         sms_context = get_context("JN", Channel.ROLE_SEND)
         self.assertTrue(sms_context["has_outgoing_channel"])
+
+
+class ChannelCRUDLTest(TembaTest):
+    def setUp(self):
+        super().setUp()
+
+        self.ex_channel = Channel.create(
+            self.org,
+            self.admin,
+            "RW",
+            "EX",
+            name="External Channel",
+            address="+250785551313",
+            role="SR",
+            schemes=("tel",),
+            config={"send_url": "http://send.com"},
+        )
+        self.other_org_channel = Channel.create(
+            self.org2,
+            self.admin2,
+            "RW",
+            "EX",
+            name="Other Channel",
+            address="+250785551414",
+            role="SR",
+            secret="45473",
+            schemes=("tel",),
+            config={"send_url": "http://send.com"},
+        )
+
+    def test_configuration(self):
+        config_url = reverse("channels.channel_configuration", args=[self.ex_channel.uuid])
+
+        # can't view configuration if not logged in
+        response = self.client.get(config_url)
+        self.assertLoginRedirect(response)
+
+        self.login(self.admin)
+
+        response = self.client.get(config_url)
+        self.assertContains(response, "To finish configuring your connection")
+
+        # can't view configuration of channel in other org
+        response = self.client.get(reverse("channels.channel_configuration", args=[self.other_org_channel.uuid]))
+        self.assertLoginRedirect(response)
 
 
 class ChannelBatchTest(TembaTest):
@@ -1974,11 +2032,31 @@ class ChannelCountTest(TembaTest):
         msg.release()
         self.assertDailyCount(self.channel, 1, ChannelCount.OUTGOING_IVR_TYPE, msg.created_on.date())
 
+        with patch("temba.channels.tasks.track") as mock:
+            self.create_incoming_msg(contact, "Test Message")
+
+            with self.assertNumQueries(6):
+                track_org_channel_counts(now=timezone.now() + timedelta(days=1))
+                self.assertEqual(2, mock.call_count)
+                mock.assert_called_with("Administrator@nyaruka.com", "temba.ivr_outgoing", {"count": 1})
+
 
 class ChannelLogTest(TembaTest):
-    def test_channellog_views(self):
+    def test_views(self):
+        other_org_channel = Channel.create(
+            self.org2,
+            self.admin2,
+            "RW",
+            "EX",
+            name="Other Channel",
+            address="+250785551414",
+            role="SR",
+            secret="45473",
+            schemes=("tel",),
+            config={"send_url": "http://send.com"},
+        )
+
         contact = self.create_contact("Fred Jones", "+12067799191")
-        self.setUpSecondaryOrg(100_000)
 
         # create unrelated incoming message
         self.create_incoming_msg(contact, "incoming msg")
@@ -2006,6 +2084,16 @@ class ChannelLogTest(TembaTest):
 
         # create failed call with an interaction log
         self.create_incoming_call(ivr_flow, contact, status=IVRCall.FAILED)
+
+        # create log for other org
+        other_org_contact = self.create_contact("Hans", number="+593979123456")
+        other_org_msg = self.create_outgoing_msg(other_org_contact, "hi", status="D")
+        other_org_log = ChannelLog.objects.create(
+            channel=other_org_channel, msg=other_org_msg, description="Successfully Sent", is_error=False
+        )
+        other_org_log.response = ""
+        other_org_log.request = "POST https://foo.bar/send?msg=failed+message"
+        other_org_log.save(update_fields=["request", "response"])
 
         # can't see the view without logging in
         list_url = reverse("channels.channellog_list", args=[self.channel.uuid])
@@ -2042,6 +2130,10 @@ class ChannelLogTest(TembaTest):
         response = self.client.get(read_url)
         self.assertContains(response, "failed+message")
         self.assertContains(response, "invalid credentials")
+
+        # can't view log from other org
+        response = self.client.get(reverse("channels.channellog_read", args=[other_org_log.id]))
+        self.assertLoginRedirect(response)
 
         # disconnect our msg
         failed_log.msg = None
@@ -2697,7 +2789,7 @@ class FacebookWhitelistTest(TembaTest):
             response = self.client.post(whitelist_url, dict(whitelisted_domain="https://foo.bar"))
 
             mock.assert_called_once_with(
-                "https://graph.facebook.com/v2.12/me/thread_settings?access_token=auth",
+                "https://graph.facebook.com/v3.3/me/thread_settings?access_token=auth",
                 json=dict(
                     setting_type="domain_whitelisting",
                     whitelisted_domains=["https://foo.bar"],

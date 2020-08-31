@@ -1,17 +1,16 @@
 import shutil
 from datetime import datetime
-from uuid import uuid4
 
 import pytz
 import redis
-import regex
-from smartmin.tests import SmartminTest
+from smartmin.tests import SmartminTest, SmartminTestMixin
 
 from django.conf import settings
 from django.contrib.auth.models import Group, User
 from django.core import mail
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
+from django.test import TransactionTestCase
 from django.utils import timezone
 
 from temba.channels.models import Channel, ChannelLog
@@ -22,7 +21,10 @@ from temba.locations.models import AdminBoundary, BoundaryAlias
 from temba.msgs.models import HANDLED, INBOX, INCOMING, OUTGOING, PENDING, SENT, Broadcast, Label, Msg
 from temba.orgs.models import Org
 from temba.utils import json
+from temba.utils.uuid import UUID, uuid4
 from temba.values.constants import Value
+
+from .mailroom import update_field_locally, update_fields_locally
 
 
 def add_testing_flag_to_context(*args):
@@ -32,7 +34,7 @@ def add_testing_flag_to_context(*args):
 class TembaTestMixin:
     databases = ("default", "direct")
 
-    def setUpOrg(self):
+    def setUpOrgs(self):
         # make sure we start off without any service users
         Group.objects.get(name="Service Users").user_set.clear()
 
@@ -71,6 +73,20 @@ class TembaTestMixin:
 
         self.surveyor.set_org(self.org)
         self.org.surveyors.add(self.surveyor)
+
+        # setup a second org with a single admin
+        self.admin2 = self.create_user("Administrator2")
+        self.org2 = Org.objects.create(
+            name="Trileet Inc.",
+            timezone=pytz.timezone("Africa/Kigali"),
+            brand="rapidpro.io",
+            created_by=self.admin2,
+            modified_by=self.admin2,
+        )
+        self.org2.initialize(topup_size=1000)
+
+        self.org2.administrators.add(self.admin2)
+        self.admin2.set_org(self.org)
 
         self.superuser.set_org(self.org)
 
@@ -166,32 +182,33 @@ class TembaTestMixin:
         data = self.get_import_json(filename, substitutions=substitutions)
         return data["flows"][0]
 
-    def create_contact(self, name=None, number=None, twitter=None, twitterid=None, urn=None, **kwargs):
+    def create_contact(self, name=None, number=None, twitter=None, urn=None, fields=None, **kwargs):
         """
         Create a contact in the master test org
         """
+
+        org = kwargs.pop("org", None) or self.org
+        user = kwargs.pop("user", None) or self.user
+
         urns = []
         if number:
             urns.append(URN.from_tel(number))
         if twitter:
             urns.append(URN.from_twitter(twitter))
-        if twitterid:
-            urns.append(URN.from_twitterid(twitterid))
         if urn:
             urns.append(urn)
 
-        if not name and not urns:  # pragma: no cover
-            raise ValueError("Need a name or URN to create a contact")
+        assert name or urns, "contact should have a name or a contact"
 
         kwargs["name"] = name
         kwargs["urns"] = urns
 
-        if "org" not in kwargs:
-            kwargs["org"] = self.org
-        if "user" not in kwargs:
-            kwargs["user"] = self.user
+        contact = Contact.get_or_create_by_urns(org, user, **kwargs)
 
-        return Contact.get_or_create_by_urns(**kwargs)
+        if fields:
+            update_fields_locally(user, contact, fields)
+
+        return contact
 
     def create_group(self, name, contacts=(), query=None, org=None):
         assert not (contacts and query), "can't provide contact list for a dynamic group"
@@ -445,6 +462,25 @@ class TembaTestMixin:
         )
         return call
 
+    def set_contact_field(self, contact, key, value, legacy_handle=False):
+        update_field_locally(self.admin, contact, key, value)
+
+        if legacy_handle:
+            contact.handle_update(fields=[key])
+
+    def bulk_release(self, objs, delete=False, user=None):
+        for obj in objs:
+            if user:
+                obj.release(user)
+            else:
+                obj.release()
+
+            if obj.id and delete:
+                obj.delete()
+
+    def releaseContacts(self, delete=False):
+        self.bulk_release(Contact.objects.all(), delete=delete, user=self.admin)
+
     def assertOutbox(self, outbox_index, from_email, subject, body, recipients):
         self.assertEqual(len(mail.outbox), outbox_index + 1)
         email = mail.outbox[outbox_index]
@@ -469,6 +505,9 @@ class TembaTestMixin:
             if tz and isinstance(expected, datetime):
                 expected = expected.astimezone(tz).replace(microsecond=0, tzinfo=None)
 
+            if isinstance(expected, UUID):
+                expected = str(expected)
+
             self.assertEqual(expected, actual, f"mismatch in cell {chr(index+65)}{row_num+1}")
 
     def assertExcelSheet(self, sheet, rows, tz=None):
@@ -480,80 +519,32 @@ class TembaTestMixin:
         for r, row in enumerate(rows):
             self.assertExcelRow(sheet, r, row, tz)
 
-    def explain(self, query):
-        cursor = connection.cursor()
-        cursor.execute("explain %s" % query)
-        plan = cursor.fetchall()
-        indexes = []
-        for match in regex.finditer(r"Index Scan using (.*?) on (.*?) \(cost", str(plan), regex.DOTALL):
-            index = match.group(1).strip()
-            table = match.group(2).strip()
-            indexes.append((table, index))
-
-        indexes = sorted(indexes, key=lambda i: i[0])
-        return indexes
+    def assertResponseError(self, response, field, message, status_code=400):
+        self.assertEqual(status_code, response.status_code)
+        body = response.json()
+        self.assertIn(field, body)
+        self.assertTrue(message, isinstance(body[field], (list, tuple)))
+        self.assertIn(message, body[field])
 
 
 class TembaTest(TembaTestMixin, SmartminTest):
+    """
+    Base class for tests where each test executes in a DB transaction
+    """
+
     def setUp(self):
-        self.setUpOrg()
-
-    def setUpSecondaryOrg(self, topup_size=None):
-        self.admin2 = self.create_user("Administrator2")
-        self.org2 = Org.objects.create(
-            name="Trileet Inc.",
-            timezone=pytz.timezone("Africa/Kigali"),
-            brand="rapidpro.io",
-            created_by=self.admin2,
-            modified_by=self.admin2,
-        )
-        self.org2.administrators.add(self.admin2)
-        self.admin2.set_org(self.org)
-
-        self.org2.initialize(topup_size=topup_size)
+        self.setUpOrgs()
 
     def tearDown(self):
         clear_flow_users()
 
-    def release(self, objs, delete=False, user=None):
-        for obj in objs:
-            if user:
-                obj.release(user)
-            else:
-                obj.release()
 
-            if obj.id and delete:
-                obj.delete()
+class TembaNonAtomicTest(TembaTestMixin, SmartminTestMixin, TransactionTestCase):
+    """
+    Base class for tests that can't be wrapped in DB transactions
+    """
 
-    def releaseChannels(self, delete=False):
-        channels = Channel.objects.all()
-        self.release(channels)
-        if delete:
-            for channel in channels:
-                channel.counts.all().delete()
-                channel.delete()
-
-    def releaseIVRCalls(self, delete=False):
-        self.release(IVRCall.objects.all(), delete=delete)
-
-    def releaseMessages(self):
-        self.release(Msg.objects.all())
-
-    def releaseContacts(self, delete=False):
-        self.release(Contact.objects.all(), delete=delete, user=self.admin)
-
-    def releaseContactFields(self, delete=False):
-        self.release(ContactField.all_fields.all(), delete=delete, user=self.admin)
-
-    def releaseRuns(self, delete=False):
-        self.release(FlowRun.objects.all(), delete=delete)
-
-    def assertResponseError(self, response, field, message, status_code=400):
-        self.assertEqual(status_code, response.status_code)
-        body = response.json()
-        self.assertTrue(message, field in body)
-        self.assertTrue(message, isinstance(body[field], (list, tuple)))
-        self.assertIn(message, body[field])
+    pass
 
 
 class AnonymousOrg(object):
