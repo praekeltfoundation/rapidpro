@@ -1,14 +1,12 @@
-import phonenumbers
-from smartmin.views import SmartFormView
-
 from django import forms
 from django.urls import reverse
 from django.utils.translation import ugettext_lazy as _
 
+import phonenumbers
+from smartmin.views import SmartFormView
 from temba.apks.models import Apk
 from temba.contacts.models import ContactURN
 from temba.orgs.models import Org
-from temba.utils import analytics
 
 from ...models import Channel
 from ...views import ClaimViewMixin, UpdateTelChannelForm
@@ -95,8 +93,6 @@ class ClaimView(ClaimViewMixin, SmartFormView):
         # always prefer the country of the phone number they are entering if we have one
         if phone_country and phone_country != country:  # pragma: needs cover
             self.object.country = phone_country
-
-        analytics.track(self.request.user.username, "temba.channel_create")
 
         self.object.claim(org, self.request.user, self.form.cleaned_data["phone_number"])
         self.object.save()

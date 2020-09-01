@@ -1,12 +1,11 @@
 import time
 from datetime import datetime, timedelta
 
-from smartmin.views import SmartTemplateView
-
 from django.db.models import Q, Sum
 from django.http import JsonResponse
 from django.utils import timezone
 
+from smartmin.views import SmartTemplateView
 from temba.channels.models import Channel, ChannelCount
 from temba.orgs.models import Org
 from temba.orgs.views import OrgPermsMixin
@@ -29,9 +28,6 @@ class MessageHistory(OrgPermsMixin, SmartTemplateView):
     permission = "orgs.org_dashboard"
 
     def render_to_response(self, context, **response_kwargs):
-
-        is_support = self.request.user.groups.filter(name="Customer Support").first()
-
         orgs = []
         org = self.derive_org()
         if org:
@@ -49,7 +45,7 @@ class MessageHistory(OrgPermsMixin, SmartTemplateView):
 
         daily_counts = daily_counts.filter(day__gt="2013-02-01").filter(day__lte=timezone.now())
 
-        if orgs or not is_support:
+        if orgs or not self.request.user.is_support():
             daily_counts = daily_counts.filter(channel__org__in=orgs)
 
         daily_counts = list(
@@ -126,8 +122,6 @@ class RangeDetails(OrgPermsMixin, SmartTemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
 
-        is_support = self.request.user.groups.filter(name="Customer Support").first()
-
         end = timezone.now()
         begin = end - timedelta(days=30)
         begin = self.request.GET.get("begin", datetime.strftime(begin, "%Y-%m-%d"))
@@ -171,7 +165,7 @@ class RangeDetails(OrgPermsMixin, SmartTemplateView):
                 .exclude(channel__org=None)
             )
 
-            if orgs or not is_support:
+            if orgs or not self.request.user.is_support():
                 channel_types = channel_types.filter(channel__org__in=orgs)
 
             channel_types = list(

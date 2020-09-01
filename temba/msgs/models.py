@@ -2,12 +2,8 @@ import logging
 import time
 from array import array
 from datetime import date, datetime, timedelta
-from uuid import uuid4
 
-import iso8601
 import pytz
-import regex
-from xlsxlite.writer import XLSXBook
 
 from django.conf import settings
 from django.contrib.auth.models import User
@@ -19,6 +15,8 @@ from django.db.models.functions import Upper
 from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 
+import iso8601
+import regex
 from temba import mailroom
 from temba.assets.models import register_asset_store
 from temba.channels.courier import push_courier_msgs
@@ -30,6 +28,8 @@ from temba.utils import chunk_list, extract_constants, on_transaction_commit
 from temba.utils.export import BaseExportAssetStore, BaseExportTask
 from temba.utils.models import JSONAsTextField, SquashableModel, TembaModel, TranslatableField
 from temba.utils.text import clean_string
+from temba.utils.uuid import uuid4
+from xlsxlite.writer import XLSXBook
 
 logger = logging.getLogger(__name__)
 

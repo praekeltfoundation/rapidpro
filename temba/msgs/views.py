@@ -1,5 +1,16 @@
 from datetime import date, timedelta
 
+from django import forms
+from django.conf import settings
+from django.contrib import messages
+from django.core.exceptions import ValidationError
+from django.forms import Form
+from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseRedirect
+from django.urls import reverse
+from django.utils import timezone
+from django.utils.http import is_safe_url, urlquote_plus
+from django.utils.translation import ugettext_lazy as _
+
 from smartmin.views import (
     SmartCreateView,
     SmartCRUDL,
@@ -9,19 +20,6 @@ from smartmin.views import (
     SmartReadView,
     SmartUpdateView,
 )
-
-from django import forms
-from django.conf import settings
-from django.contrib import messages
-from django.core.exceptions import ValidationError
-from django.forms import Form
-from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseRedirect
-from django.urls import reverse
-from django.utils import timezone
-from django.utils.http import urlquote_plus
-from django.utils.translation import ugettext_lazy as _
-from django.views.decorators.csrf import csrf_exempt
-
 from temba.archives.models import Archive
 from temba.channels.models import Channel
 from temba.contacts.fields import OmniboxField
@@ -122,9 +120,15 @@ class SendMessageForm(Form):
 
     def clean(self):
         cleaned = super().clean()
-        if self.user.get_org().is_suspended():
+        org = self.user.get_org()
+
+        if org.is_suspended:
             raise ValidationError(
                 _("Sorry, your account is currently suspended. To enable sending messages, please contact support.")
+            )
+        if org.is_flagged:
+            raise ValidationError(
+                _("Sorry, your account is currently flagged. To enable sending messages, please contact support.")
             )
         return cleaned
 
@@ -464,7 +468,6 @@ class MsgActionForm(BaseActionForm):
 
 
 class MsgActionMixin(SmartListView):
-    @csrf_exempt
     def dispatch(self, *args, **kwargs):
         return super().dispatch(*args, **kwargs)
 
@@ -561,7 +564,11 @@ class MsgCRUDL(SmartCRUDL):
                 return None, Label.all_objects.get(org=self.request.user.get_org(), uuid=label_id)
 
         def get_success_url(self):
-            return self.request.GET.get("redirect") or reverse("msgs.msg_inbox")
+            redirect = self.request.GET.get("redirect")
+            if redirect and not is_safe_url(redirect, self.request.get_host()):
+                redirect = None
+
+            return redirect or reverse("msgs.msg_inbox")
 
         def form_invalid(self, form):  # pragma: needs cover
             if "_format" in self.request.GET and self.request.GET["_format"] == "json":

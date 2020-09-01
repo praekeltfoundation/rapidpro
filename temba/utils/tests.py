@@ -8,31 +8,32 @@ from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import MagicMock, PropertyMock, patch
 
-import intercom.errors
-import iso8601
-import pycountry
 import pytz
-from django_redis import get_redis_connection
-from openpyxl import load_workbook
-from smartmin.tests import SmartminTestMixin
 
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.core import checks
 from django.core.management import CommandError, call_command
 from django.db import connection, models
+from django.forms import ValidationError
 from django.test import TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
 from celery.app.task import Task
 
+import intercom.errors
+import iso8601
+import pycountry
 import temba.utils.analytics
+from django_redis import get_redis_connection
+from openpyxl import load_workbook
+from smartmin.tests import SmartminTestMixin
 from temba.contacts.models import Contact, ContactField, ContactGroup, ContactGroupCount, ExportContactsTask
 from temba.flows.models import FlowRun
 from temba.orgs.models import Org, UserSettings
 from temba.tests import ESMockWithScroll, TembaTest, matchers
-from temba.utils import json
+from temba.utils import json, uuid
 from temba.utils.json import TembaJsonAdapter
 
 from . import (
@@ -60,12 +61,13 @@ from .dates import (
 )
 from .email import is_valid_address, send_simple_email
 from .export import TableExporter
+from .fields import validate_external_url
 from .gsm7 import calculate_num_segments, is_gsm7, replace_non_gsm7_accents
 from .http import http_headers
 from .locks import LockNotAcquiredException, NonBlockingLock
 from .models import IDSliceQuerySet, JSONAsTextField, patch_queryset_count
 from .templatetags.temba import short_datetime
-from .text import clean_string, decode_base64, random_string, slugify_with, truncate, unsnakify
+from .text import clean_string, decode_base64, generate_token, random_string, slugify_with, truncate, unsnakify
 from .timezones import TimeZoneFormField, timezone_to_country_code
 
 
@@ -215,6 +217,9 @@ class InitTest(TembaTest):
 
         self.assertEqual(headers, {"User-agent": "RapidPro", "Foo": "Bar", "Token": "123456"})
         self.assertEqual(http_headers(), {"User-agent": "RapidPro"})  # check changes don't leak
+
+    def test_generate_token(self):
+        self.assertEqual(len(generate_token()), 8)
 
 
 class DatesTest(TembaTest):
@@ -1116,11 +1121,11 @@ class MiddlewareTest(TembaTest):
             self.assertRedirect(self.client.get(reverse("public.public_index")), "/redirect")
 
     def test_activate_language(self):
-        self.assertContains(self.client.get(reverse("public.public_index")), "Create Account")
+        self.assertContains(self.client.get(reverse("public.public_index")), "Sign Up")
 
         self.login(self.admin)
 
-        self.assertContains(self.client.get(reverse("public.public_index")), "Create Account")
+        self.assertContains(self.client.get(reverse("public.public_index")), "Sign Up")
         self.assertContains(self.client.get(reverse("contacts.contact_list")), "Import Contacts")
 
         UserSettings.objects.filter(user=self.admin).update(language="fr")
@@ -1145,17 +1150,17 @@ class MakeTestDBTest(SmartminTestMixin, TransactionTestCase):
         )
         assertOrgCounts(ContactField.user_fields.all(), [6, 6, 6])
         assertOrgCounts(ContactGroup.user_groups.all(), [10, 10, 10])
-        assertOrgCounts(Contact.objects.all(), [18, 5, 7])
+        assertOrgCounts(Contact.objects.all(), [12, 11, 7])
 
         org_1_all_contacts = ContactGroup.system_groups.get(org=org1, name="All Contacts")
 
-        self.assertEqual(org_1_all_contacts.contacts.count(), 18)
+        self.assertEqual(org_1_all_contacts.contacts.count(), 12)
         self.assertEqual(
-            list(ContactGroupCount.objects.filter(group=org_1_all_contacts).values_list("count")), [(18,)]
+            list(ContactGroupCount.objects.filter(group=org_1_all_contacts).values_list("count")), [(12,)]
         )
 
         # same seed should generate objects with same UUIDs
-        self.assertEqual(ContactGroup.user_groups.order_by("id").first().uuid, "12b01ad0-db44-462d-81e6-dc0995c13a79")
+        self.assertEqual(ContactGroup.user_groups.order_by("id").first().uuid, "086dde0d-eb11-4413-aa44-6896fef91f7f")
 
         # check if contact fields are serialized
         self.assertIsNotNone(Contact.objects.first().fields)
@@ -1828,3 +1833,49 @@ class RedactTest(TestCase):
             ),
             "POST /c/t/23524/receive HTTP/1.1\r\nHost: yy********\r\n\r\n********",
         )
+
+
+class TestValidators(TestCase):
+    def test_validate_external_url(self):
+        cases = (
+            dict(url="ftp://localhost/foo", error="must be http or https scheme"),
+            dict(url="http://localhost/foo", error="cannot be localhost"),
+            dict(url="http://localhost:80/foo", error="cannot be localhost"),
+            dict(url="https://localhost/foo", error="cannot be localhost"),
+            dict(url="http://127.0.00.1/foo", error="cannot be localhost"),
+            dict(url="http://::1:80/foo", error="host cannot be resolved"),  # no ipv6 addresses for now
+            dict(url="http://google.com/foo", error=None),
+            dict(url="http://google.com:8000/foo", error=None),
+            dict(url="HTTP://google.com:8000/foo", error=None),
+        )
+
+        for case in cases:
+            if not case["error"]:
+                try:
+                    validate_external_url(case["url"])
+                except Exception as e:
+                    self.assertIsNone(e)
+
+            else:
+                with self.assertRaises(ValidationError) as cm:
+                    cm.expected.__name__ = f'ValueError for {case["url"]}'
+                    validate_external_url(case["url"])
+
+                self.assertTrue(case["error"] in str(cm.exception), f"{case['error']} not in {cm.exception}")
+
+
+class TestUUIDs(TembaTest):
+    def test_seeded_generator(self):
+        g = uuid.seeded_generator(123)
+        self.assertEqual(uuid.UUID("66b3670d-b37d-4644-aedd-51167c53dac4", version=4), g())
+        self.assertEqual(uuid.UUID("07ff4068-f3de-4c44-8a3e-921b952aa8d6", version=4), g())
+
+        # same seed, same UUIDs
+        g = uuid.seeded_generator(123)
+        self.assertEqual(uuid.UUID("66b3670d-b37d-4644-aedd-51167c53dac4", version=4), g())
+        self.assertEqual(uuid.UUID("07ff4068-f3de-4c44-8a3e-921b952aa8d6", version=4), g())
+
+        # different seed, different UUIDs
+        g = uuid.seeded_generator(456)
+        self.assertEqual(uuid.UUID("8c338abf-94e2-4c73-9944-72f7a6ff5877", version=4), g())
+        self.assertEqual(uuid.UUID("c8e0696f-b3f6-4e63-a03a-57cb95bdb6e3", version=4), g())

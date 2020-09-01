@@ -1,9 +1,9 @@
-import phonenumbers
-
 from django import forms
 from django.utils.translation import ugettext_lazy as _
 
+import phonenumbers
 from temba.channels.views import ALL_COUNTRIES, AuthenticatedExternalCallbackClaimView, ClaimViewMixin
+from temba.utils.fields import ExternalURLField
 
 
 class ClaimView(AuthenticatedExternalCallbackClaimView):
@@ -17,7 +17,7 @@ class ClaimView(AuthenticatedExternalCallbackClaimView):
             label=_("Number"),
             help_text=_("The short code or phone number you are connecting."),
         )
-        url = forms.URLField(
+        url = ExternalURLField(
             label=_("URL"), help_text=_("The URL for the Jasmin server send path. ex: https://jasmin.gateway.io/send")
         )
         username = forms.CharField(

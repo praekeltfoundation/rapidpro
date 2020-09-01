@@ -1,7 +1,4 @@
-import phonenumbers
-import pycountry
 import requests
-from smartmin.views import SmartFormView
 
 from django import forms
 from django.conf import settings
@@ -10,6 +7,9 @@ from django.http import HttpResponseRedirect
 from django.urls import reverse
 from django.utils.translation import ugettext_lazy as _
 
+import phonenumbers
+import pycountry
+from smartmin.views import SmartFormView
 from temba.channels.models import Channel
 from temba.channels.views import (
     PLIVO_SUPPORTED_COUNTRIES,
@@ -17,7 +17,6 @@ from temba.channels.views import (
     BaseClaimNumberMixin,
     ClaimViewMixin,
 )
-from temba.utils import analytics
 from temba.utils.http import http_headers
 from temba.utils.models import generate_uuid
 
@@ -175,8 +174,6 @@ class ClaimView(BaseClaimNumberMixin, SmartFormView):
         channel = Channel.create(
             org, user, country, "PL", name=phone, address=phone_number, config=plivo_config, uuid=plivo_uuid
         )
-
-        analytics.track(user.username, "temba.channel_claim_plivo", dict(number=phone_number))
 
         return channel
 

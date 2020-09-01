@@ -1,8 +1,9 @@
 import datetime
 
+import pytz
+
 import psycopg2.extensions
 import psycopg2.extras
-import pytz
 import simplejson
 
 

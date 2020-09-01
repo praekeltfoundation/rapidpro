@@ -1,19 +1,16 @@
-from uuid import uuid4
-
-import phonenumbers
-from phonenumbers.phonenumberutil import region_code_for_number
-from smartmin.views import SmartFormView
-from twilio.base.exceptions import TwilioRestException
-
 from django import forms
 from django.conf import settings
 from django.http import HttpResponseRedirect
 from django.urls import reverse
 from django.utils.translation import ugettext_lazy as _
 
+import phonenumbers
+from phonenumbers.phonenumberutil import region_code_for_number
+from smartmin.views import SmartFormView
 from temba.orgs.models import Org
-from temba.utils import analytics
 from temba.utils.timezones import timezone_to_country_code
+from temba.utils.uuid import uuid4
+from twilio.base.exceptions import TwilioRestException
 
 from ...models import Channel
 from ...views import (
@@ -129,6 +126,10 @@ class ClaimView(BaseClaimNumberMixin, SmartFormView):
         )
 
         is_short_code = len(phone_number) <= 6
+        tps = 10
+        if country in ["US", "CA"]:
+            tps = 1
+
         if is_short_code:
             short_codes = client.api.short_codes.stream(short_code=phone_number)
             short_code = next(short_codes, None)
@@ -140,6 +141,7 @@ class ClaimView(BaseClaimNumberMixin, SmartFormView):
 
                 role = Channel.ROLE_SEND + Channel.ROLE_RECEIVE
                 phone = phone_number
+                tps = 100
 
             else:  # pragma: no cover
                 raise Exception(
@@ -177,9 +179,16 @@ class ClaimView(BaseClaimNumberMixin, SmartFormView):
         }
 
         channel = Channel.create(
-            org, user, country, "T", name=phone, address=phone_number, role=role, config=config, uuid=channel_uuid
+            org,
+            user,
+            country,
+            "T",
+            name=phone,
+            address=phone_number,
+            role=role,
+            config=config,
+            uuid=channel_uuid,
+            tps=tps,
         )
-
-        analytics.track(user.username, "temba.channel_claim_twilio", properties=dict(number=phone_number))
 
         return channel

@@ -1,7 +1,7 @@
+from django.conf import settings
+
 from elasticsearch import Elasticsearch
 from elasticsearch_dsl import Search as es_Search
-
-from django.conf import settings
 
 ES = Elasticsearch(hosts=[settings.ELASTICSEARCH_URL])
 

@@ -1,12 +1,11 @@
 from gettext import gettext as _
 
-from smartmin.views import SmartCreateView, SmartCRUDL, SmartDeleteView, SmartListView, SmartReadView, SmartUpdateView
-
 from django import forms
 from django.conf import settings
 from django.http import HttpResponseRedirect
 from django.urls import reverse
 
+from smartmin.views import SmartCreateView, SmartCRUDL, SmartDeleteView, SmartListView, SmartReadView, SmartUpdateView
 from temba.orgs.views import ModalMixin, OrgObjPermsMixin, OrgPermsMixin
 
 from .models import Global
@@ -94,7 +93,7 @@ class GlobalCRUDL(SmartCRUDL):
             response["Temba-Success"] = self.get_success_url()
             return response
 
-    class Update(ModalMixin, OrgPermsMixin, SmartUpdateView):
+    class Update(ModalMixin, OrgObjPermsMixin, SmartUpdateView):
         form_class = UpdateGlobalForm
         success_message = ""
         submit_button_name = _("Update")
@@ -104,7 +103,7 @@ class GlobalCRUDL(SmartCRUDL):
             kwargs["org"] = self.derive_org()
             return kwargs
 
-    class Delete(OrgPermsMixin, SmartDeleteView):
+    class Delete(OrgObjPermsMixin, SmartDeleteView):
         cancel_url = "@globals.global_list"
         redirect_url = "@globals.global_list"
         success_message = ""

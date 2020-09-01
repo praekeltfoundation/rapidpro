@@ -1,14 +1,13 @@
 from datetime import datetime
 
-from smartmin.views import SmartCRUDL, SmartUpdateView
-
 from django import forms
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.timezone import get_current_timezone_name
 from django.utils.translation import ugettext_lazy as _
 
-from temba.orgs.views import OrgPermsMixin
+from smartmin.views import SmartCRUDL, SmartUpdateView
+from temba.orgs.views import OrgObjPermsMixin
 
 from .models import Schedule
 
@@ -59,7 +58,7 @@ class ScheduleCRUDL(SmartCRUDL):
     model = Schedule
     actions = ("update",)
 
-    class Update(OrgPermsMixin, SmartUpdateView):
+    class Update(OrgObjPermsMixin, SmartUpdateView):
         form_class = ScheduleForm
         fields = ("repeat_period", "repeat_days_of_week", "start", "start_datetime_value")
         field_config = dict(repeat_period=dict(label="Repeat", help=None))

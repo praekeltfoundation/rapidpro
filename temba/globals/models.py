@@ -1,14 +1,12 @@
-from uuid import uuid4
-
-import regex
-from smartmin.models import SmartModel
-
 from django.db import models
 from django.db.models import Count, Q
 from django.utils.translation import ugettext_lazy as _
 
+import regex
+from smartmin.models import SmartModel
 from temba.orgs.models import Org
 from temba.utils.text import unsnakify
+from temba.utils.uuid import uuid4
 
 
 class Global(SmartModel):

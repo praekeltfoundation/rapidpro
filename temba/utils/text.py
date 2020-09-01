@@ -4,11 +4,12 @@ import re
 import string
 import sys
 from collections import Counter
-
-import regex
+from os import urandom
 
 from django.utils.encoding import force_text
 from django.utils.text import slugify
+
+import regex
 
 CONTROL_CHARACTERES_REGEX = r"[\000-\010]|[\013-\014]|[\016-\037]"
 
@@ -150,3 +151,7 @@ def random_string(length):
     """
     letters = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"  # avoid things that could be mistaken ex: 'I' and '1'
     return "".join([random.choice(letters) for _ in range(length)])
+
+
+def generate_token():
+    return base64.b32encode(urandom(5)).decode("utf-8").lower()

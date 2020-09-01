@@ -1,8 +1,7 @@
-import telegram
-
 from django.urls import reverse
 from django.utils.translation import ugettext_lazy as _
 
+import telegram
 from temba.contacts.models import TELEGRAM_SCHEME
 
 from ...models import ChannelType

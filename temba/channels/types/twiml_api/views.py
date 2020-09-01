@@ -1,10 +1,10 @@
-from uuid import uuid4
+from django import forms
+from django.utils.translation import ugettext_lazy as _
 
 import phonenumbers
 from smartmin.views import SmartFormView
-
-from django import forms
-from django.utils.translation import ugettext_lazy as _
+from temba.utils.fields import ExternalURLField
+from temba.utils.uuid import uuid4
 
 from ...models import Channel
 from ...views import ALL_COUNTRIES, ClaimViewMixin
@@ -26,7 +26,7 @@ class ClaimView(ClaimViewMixin, SmartFormView):
             label=_("Number"),
             help_text=_("The phone number without country code or short code you are connecting."),
         )
-        url = forms.URLField(
+        url = ExternalURLField(
             max_length=1024,
             label=_("TwiML REST API Host"),
             help_text=_("The publicly accessible URL for your TwiML REST API instance ex: https://api.twilio.com"),

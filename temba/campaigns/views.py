@@ -1,13 +1,11 @@
-from smartmin.views import SmartCreateView, SmartCRUDL, SmartDeleteView, SmartListView, SmartReadView, SmartUpdateView
-
 from django import forms
 from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.http import Http404, HttpResponseRedirect
 from django.urls import reverse
 from django.utils.translation import ugettext_lazy as _
-from django.views.decorators.csrf import csrf_exempt
 
+from smartmin.views import SmartCreateView, SmartCRUDL, SmartDeleteView, SmartListView, SmartReadView, SmartUpdateView
 from temba.contacts.models import ContactField, ContactGroup
 from temba.flows.models import Flow
 from temba.msgs.models import Msg
@@ -30,7 +28,6 @@ class CampaignActionForm(BaseActionForm):
 
 
 class CampaignActionMixin(SmartListView):
-    @csrf_exempt
     def dispatch(self, *args, **kwargs):
         return super().dispatch(*args, **kwargs)
 
@@ -594,7 +591,7 @@ class CampaignEventCRUDL(SmartCRUDL):
         def get_cancel_url(self):  # pragma: needs cover
             return reverse("campaigns.campaign_read", args=[self.object.campaign.pk])
 
-    class Update(OrgPermsMixin, ModalMixin, SmartUpdateView):
+    class Update(OrgObjPermsMixin, ModalMixin, SmartUpdateView):
         success_message = ""
         form_class = CampaignEventForm
         submit_button_name = _("Update Event")
@@ -620,6 +617,9 @@ class CampaignEventCRUDL(SmartCRUDL):
             kwargs = super().get_form_kwargs()
             kwargs["user"] = self.request.user
             return kwargs
+
+        def get_object_org(self):
+            return self.get_object().campaign.org
 
         def get_context_data(self, **kwargs):
             return super().get_context_data(**kwargs)

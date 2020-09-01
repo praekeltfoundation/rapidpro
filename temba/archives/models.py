@@ -2,13 +2,13 @@ import gzip
 from gettext import gettext as _
 from urllib.parse import urlparse
 
-import boto3
 from dateutil.relativedelta import relativedelta
 
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
+import boto3
 from temba.utils import json, sizeof_fmt
 
 

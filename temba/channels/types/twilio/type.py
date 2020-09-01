@@ -1,11 +1,10 @@
-from twilio.base.exceptions import TwilioRestException
-
 from django.utils.translation import ugettext_lazy as _
 
 from temba.channels.types.twilio.views import ClaimView
 from temba.channels.views import TWILIO_SUPPORTED_COUNTRIES_CONFIG
 from temba.contacts.models import TEL_SCHEME
 from temba.utils.timezones import timezone_to_country_code
+from twilio.base.exceptions import TwilioRestException
 
 from ...models import ChannelType
 

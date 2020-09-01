@@ -1,7 +1,6 @@
 import logging
 from datetime import timedelta
 
-import iso8601
 import pytz
 
 from django.conf import settings
@@ -9,6 +8,7 @@ from django.utils import timezone
 
 from celery.task import task
 
+import iso8601
 from temba.utils.celery import nonoverlapping_task
 
 from .models import Contact, ContactGroup, ContactGroupCount, ExportContactsTask

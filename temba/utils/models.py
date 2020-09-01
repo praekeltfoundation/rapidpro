@@ -1,9 +1,6 @@
 import time
 import types
 from collections import OrderedDict
-from uuid import uuid4
-
-from smartmin.models import SmartModel
 
 from django.contrib.postgres.fields import HStoreField, JSONField as DjangoJSONField
 from django.core import checks
@@ -12,11 +9,15 @@ from django.db import connection, models
 from django.utils.functional import cached_property
 from django.utils.translation import ugettext_lazy as _
 
-from temba.utils import json
+from smartmin.models import SmartModel
+from temba.utils import json, uuid
 
 
 def generate_uuid():
-    return str(uuid4())
+    """
+    Returns a random stringified UUID for use with older models that use char fields instead of UUID fields
+    """
+    return str(uuid.uuid4())
 
 
 def patch_queryset_count(qs, function):

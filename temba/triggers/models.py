@@ -1,10 +1,9 @@
-from smartmin.models import SmartModel
-
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 
+from smartmin.models import SmartModel
 from temba.channels.models import Channel
 from temba.contacts.models import Contact, ContactGroup
 from temba.flows.models import Flow
@@ -193,16 +192,6 @@ class Trigger(SmartModel):
 
             # archive any conflicting triggers
             matches.exclude(id=self.id).update(is_archived=True, modified_on=now, modified_by=user)
-
-    @classmethod
-    def archive_triggers_for_contact(cls, contact, user):
-        contact_triggers = list(contact.trigger_set.all())
-
-        for trigger in contact_triggers:
-            trigger.contacts.remove(contact)
-
-            if not trigger.groups.exists() and not trigger.contacts.exists() and not trigger.is_archived:
-                trigger.archive(user)
 
     @classmethod
     def import_triggers(cls, org, user, trigger_defs, same_site=False):

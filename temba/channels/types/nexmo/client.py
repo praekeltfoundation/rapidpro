@@ -1,8 +1,8 @@
 import time
 
-import nexmo
-
 from django.urls import reverse
+
+import nexmo
 
 
 class NexmoClient:

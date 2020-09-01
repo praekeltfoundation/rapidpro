@@ -1,10 +1,10 @@
 import time
 
 import requests
-from django_redis import get_redis_connection
 
 from django.utils.http import urlencode
 
+from django_redis import get_redis_connection
 from temba.channels.models import ChannelLog
 from temba.channels.types.jiochat.client import JioChatClient
 from temba.utils import json

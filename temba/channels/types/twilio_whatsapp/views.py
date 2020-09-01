@@ -1,18 +1,15 @@
-from uuid import uuid4
-
-import phonenumbers
-from phonenumbers.phonenumberutil import region_code_for_number
-from smartmin.views import SmartFormView
-from twilio.base.exceptions import TwilioRestException
-
 from django import forms
 from django.http import HttpResponseRedirect
 from django.urls import reverse
 from django.utils.translation import ugettext_lazy as _
 
+import phonenumbers
+from phonenumbers.phonenumberutil import region_code_for_number
+from smartmin.views import SmartFormView
 from temba.contacts.models import WHATSAPP_SCHEME
 from temba.orgs.models import Org
-from temba.utils import analytics
+from temba.utils.uuid import uuid4
+from twilio.base.exceptions import TwilioRestException
 
 from ...models import Channel
 from ...views import ALL_COUNTRIES, TWILIO_SUPPORTED_COUNTRIES, BaseClaimNumberMixin, ClaimViewMixin
@@ -97,7 +94,7 @@ class ClaimView(BaseClaimNumberMixin, SmartFormView):
 
         twilio_phone = next(twilio_phones, None)
         if not twilio_phone:
-            raise Exception(_("Only existing Twilio Whatsapp number are supported"))
+            raise Exception(_("Only existing Twilio WhatsApp number are supported"))
 
         phone = phonenumbers.format_number(
             phonenumbers.parse(phone_number, None), phonenumbers.PhoneNumberFormat.NATIONAL
@@ -127,7 +124,5 @@ class ClaimView(BaseClaimNumberMixin, SmartFormView):
             uuid=channel_uuid,
             schemes=[WHATSAPP_SCHEME],
         )
-
-        analytics.track(user.username, "temba.channel_claim_twilio_whatsapp", properties=dict(number=phone_number))
 
         return channel

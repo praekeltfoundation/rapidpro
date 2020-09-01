@@ -1,6 +1,3 @@
-import regex
-from smartmin.views import SmartCreateView, SmartCRUDL, SmartListView, SmartTemplateView, SmartUpdateView
-
 from django import forms
 from django.db.models import Min
 from django.http import HttpResponse, HttpResponseRedirect
@@ -8,8 +5,9 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.timezone import get_current_timezone_name
 from django.utils.translation import ugettext_lazy as _
-from django.views.decorators.csrf import csrf_exempt
 
+import regex
+from smartmin.views import SmartCreateView, SmartCRUDL, SmartListView, SmartTemplateView, SmartUpdateView
 from temba.channels.models import Channel
 from temba.contacts.models import ContactGroup, ContactURN
 from temba.contacts.omnibox import omnibox_deserialize, omnibox_serialize
@@ -359,7 +357,6 @@ class TriggerActionForm(BaseActionForm):
 
 
 class TriggerActionMixin(SmartListView):
-    @csrf_exempt
     def dispatch(self, *args, **kwargs):
         return super().dispatch(*args, **kwargs)
 
@@ -578,7 +575,7 @@ class TriggerCRUDL(SmartCRUDL):
             return obj
 
         def form_valid(self, form):
-            analytics.track(self.request.user.username, "temba.trigger_created_keyword")
+            analytics.track(self.request.user.username, "temba.trigger_created", dict(type="keyword"))
             return super().form_valid(form)
 
         def get_form_kwargs(self):
@@ -608,7 +605,7 @@ class TriggerCRUDL(SmartCRUDL):
                 flow=group_flow,
             )
 
-            analytics.track(self.request.user.username, "temba.trigger_created_register", dict(name=join_group.name))
+            analytics.track(self.request.user.username, "temba.trigger_created", dict(type="register"))
 
             response = self.render_to_response(self.get_context_data(form=form))
             response["REDIRECT"] = self.get_success_url()
@@ -641,7 +638,7 @@ class TriggerCRUDL(SmartCRUDL):
                 referrer_id=form.cleaned_data["referrer_id"],
             )
 
-            analytics.track(self.request.user.username, "temba.trigger_created_referral")
+            analytics.track(self.request.user.username, "temba.trigger_created", dict(type="referral"))
 
             response = self.render_to_response(self.get_context_data(form=form))
             response["REDIRECT"] = self.get_success_url()
@@ -666,7 +663,7 @@ class TriggerCRUDL(SmartCRUDL):
                 return super().form_invalid(form)
 
         def form_valid(self, form):
-            analytics.track(self.request.user.username, "temba.trigger_created_schedule")
+            analytics.track(self.request.user.username, "temba.trigger_created", dict(type="schedule"))
             org = self.request.user.get_org()
             start_time = form.get_start_time(org.timezone)
 
@@ -748,7 +745,7 @@ class TriggerCRUDL(SmartCRUDL):
                 flow=form.cleaned_data["flow"],
             )
 
-            analytics.track(self.request.user.username, "temba.trigger_created_missed_call")
+            analytics.track(self.request.user.username, "temba.trigger_created", dict(type="missed_call"))
 
             response = self.render_to_response(self.get_context_data(form=form))
             response["REDIRECT"] = self.get_success_url()
@@ -786,7 +783,7 @@ class TriggerCRUDL(SmartCRUDL):
             for group in groups:
                 trigger.groups.add(group)
 
-            analytics.track(self.request.user.username, "temba.trigger_created_catchall")
+            analytics.track(self.request.user.username, "temba.trigger_created", dict(type="catchall"))
 
             response = self.render_to_response(self.get_context_data(form=form))
             response["REDIRECT"] = self.get_success_url()
@@ -808,7 +805,7 @@ class TriggerCRUDL(SmartCRUDL):
                 org, user, Trigger.TYPE_NEW_CONVERSATION, form.cleaned_data["flow"], form.cleaned_data["channel"]
             )
 
-            analytics.track(self.request.user.username, "temba.trigger_created_new_conversation")
+            analytics.track(self.request.user.username, "temba.trigger_created", dict(type="new_conversation"))
 
             response = self.render_to_response(self.get_context_data(form=form))
             response["REDIRECT"] = self.get_success_url()

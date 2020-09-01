@@ -1,12 +1,11 @@
-from django_redis import get_redis_connection
-from twython import Twython
-
 from django.conf import settings
 
 from celery.task import task
 
+from django_redis import get_redis_connection
 from temba.contacts.models import TWITTER_SCHEME, URN, ContactURN
 from temba.utils import chunk_list
+from twython import Twython
 
 
 @task(track_started=True, name="resolve_twitter_ids_task")

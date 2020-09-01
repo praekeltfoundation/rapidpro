@@ -1,14 +1,13 @@
 import copy
 from collections import defaultdict
-from uuid import uuid4
 
 import regex
-
 from temba.contacts.models import ContactField, ContactGroup
 from temba.flows.models import Flow, RuleSet
 from temba.msgs.models import Label
 from temba.utils import json
 from temba.utils.languages import iso6392_to_iso6393
+from temba.utils.uuid import uuid4
 
 from .definition import (
     ContainsAnyTest,

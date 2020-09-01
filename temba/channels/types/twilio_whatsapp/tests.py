@@ -1,13 +1,12 @@
 from unittest.mock import patch
 
-from twilio.base.exceptions import TwilioRestException
-
 from django.urls import reverse
 
 from temba.channels.models import Channel
 from temba.orgs.models import Org
 from temba.tests import TembaTest
 from temba.tests.twilio import MockRequestValidator, MockTwilioClient
+from twilio.base.exceptions import TwilioRestException
 
 
 class TwilioWhatsappTypeTest(TembaTest):
@@ -104,7 +103,7 @@ class TwilioWhatsappTypeTest(TembaTest):
             # claim it
             response = self.client.post(claim_twilio, dict(country="US", phone_number="12062345678"))
             self.assertFormError(
-                response, "form", "phone_number", "Only existing Twilio Whatsapp number are supported"
+                response, "form", "phone_number", "Only existing Twilio WhatsApp number are supported"
             )
 
         with patch("temba.tests.twilio.MockTwilioClient.MockPhoneNumbers.stream") as mock_numbers:
