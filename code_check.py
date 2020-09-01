@@ -68,7 +68,7 @@ if __name__ == "__main__":
     colorama.init()
 
     status("Make any missing migrations")
-    cmd("python manage.py makemigrations")
+    # cmd("python manage.py makemigrations")
 
     status("Running black")
     cmd("black --line-length=119 --target-version=py36 temba")
@@ -80,7 +80,7 @@ if __name__ == "__main__":
     cmd("isort -rc temba")
 
     status("Updating locale PO files")
-    update_po_files()
+    # update_po_files()
 
     if not args.skip_compilemessages:
         status("Recompiling locale MO files")

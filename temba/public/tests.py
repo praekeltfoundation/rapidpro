@@ -1,10 +1,7 @@
 import copy
 from unittest.mock import MagicMock
 
-from smartmin.tests import _CRUDLTest
-
 from django.conf import settings
-from django.contrib.auth.models import User
 from django.core.files import File
 from django.urls import reverse
 
