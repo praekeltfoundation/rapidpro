@@ -1,12 +1,11 @@
 from gettext import gettext as _
 
-from smartmin.views import SmartCreateView, SmartCRUDL, SmartDeleteView, SmartListView, SmartReadView, SmartUpdateView
-
 from django import forms
 from django.conf import settings
 from django.http import HttpResponseRedirect
 from django.urls import reverse
 
+from smartmin.views import SmartCreateView, SmartCRUDL, SmartDeleteView, SmartListView, SmartReadView, SmartUpdateView
 from temba.orgs.views import ModalMixin, OrgObjPermsMixin, OrgPermsMixin
 
 from .models import Global

@@ -1,7 +1,4 @@
-import phonenumbers
-import pycountry
 import requests
-from smartmin.views import SmartFormView
 
 from django import forms
 from django.conf import settings
@@ -10,6 +7,9 @@ from django.http import HttpResponseRedirect
 from django.urls import reverse
 from django.utils.translation import ugettext_lazy as _
 
+import phonenumbers
+import pycountry
+from smartmin.views import SmartFormView
 from temba.channels.models import Channel
 from temba.channels.views import (
     PLIVO_SUPPORTED_COUNTRIES,

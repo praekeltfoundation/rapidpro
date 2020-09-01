@@ -1,9 +1,8 @@
-from smartmin.views import SmartFormView
-
 from django import forms
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.utils.translation import ugettext_lazy as _
 
+from smartmin.views import SmartFormView
 from temba.contacts.models import TEL_SCHEME, TWITTER_SCHEME, ContactURN
 from temba.utils.fields import ExternalURLField
 

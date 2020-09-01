@@ -1,7 +1,6 @@
 import time
 
 from django_redis import get_redis_connection
-
 from temba.utils import json
 
 

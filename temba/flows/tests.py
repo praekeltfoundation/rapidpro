@@ -5,9 +5,7 @@ import re
 from datetime import timedelta
 from unittest.mock import PropertyMock, patch
 
-import iso8601
 import pytz
-from openpyxl import load_workbook
 
 from django.conf import settings
 from django.contrib.auth.models import Group
@@ -17,6 +15,8 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.encoding import force_text
 
+import iso8601
+from openpyxl import load_workbook
 from temba.api.models import Resthook
 from temba.archives.models import Archive
 from temba.campaigns.models import Campaign, CampaignEvent

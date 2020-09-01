@@ -1,8 +1,8 @@
 from datetime import datetime
 
 import pytz
-import regex
 
+import regex
 from temba.utils.dates import FULL_ISO8601_REGEX
 
 UUID4_REGEX = regex.compile(

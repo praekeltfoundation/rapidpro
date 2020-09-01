@@ -1,12 +1,12 @@
 import threading
 
 import requests
-from colorama import Fore, init as colorama_init
 from requests.exceptions import ConnectionError
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
+from colorama import Fore, init as colorama_init
 from temba import mailroom
 from temba.contacts.models import URN
 from temba.orgs.models import Org

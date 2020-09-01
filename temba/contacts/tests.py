@@ -6,9 +6,6 @@ from decimal import Decimal
 from unittest.mock import PropertyMock, patch
 
 import pytz
-from openpyxl import load_workbook
-from smartmin.csv_imports.models import ImportTask
-from smartmin.models import SmartImportRowError
 
 from django.conf import settings
 from django.core.files.base import ContentFile
@@ -20,6 +17,9 @@ from django.test.utils import override_settings
 from django.urls import reverse
 from django.utils import timezone
 
+from openpyxl import load_workbook
+from smartmin.csv_imports.models import ImportTask
+from smartmin.models import SmartImportRowError
 from temba.airtime.models import AirtimeTransfer
 from temba.api.models import WebHookResult
 from temba.campaigns.models import Campaign, CampaignEvent, EventFire

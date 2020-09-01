@@ -2,21 +2,7 @@ import logging
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
-import iso8601
-import regex
 import requests
-from packaging.version import Version
-from smartmin.views import (
-    SmartCreateView,
-    SmartCRUDL,
-    SmartDeleteView,
-    SmartFormView,
-    SmartListView,
-    SmartReadView,
-    SmartTemplateView,
-    SmartUpdateView,
-    smart_url,
-)
 
 from django import forms
 from django.conf import settings
@@ -33,6 +19,20 @@ from django.utils.translation import ugettext_lazy as _
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import FormView
 
+import iso8601
+import regex
+from packaging.version import Version
+from smartmin.views import (
+    SmartCreateView,
+    SmartCRUDL,
+    SmartDeleteView,
+    SmartFormView,
+    SmartListView,
+    SmartReadView,
+    SmartTemplateView,
+    SmartUpdateView,
+    smart_url,
+)
 from temba import mailroom
 from temba.archives.models import Archive
 from temba.channels.models import Channel

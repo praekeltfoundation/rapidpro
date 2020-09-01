@@ -3,13 +3,13 @@ import re
 import time
 
 import requests
-from django_redis import get_redis_connection
 from requests import RequestException
 
 from django.utils import timezone
 
 from celery.task import task
 
+from django_redis import get_redis_connection
 from temba.channels.models import Channel
 from temba.contacts.models import WHATSAPP_SCHEME, ContactURN
 from temba.request_logs.models import HTTPLog

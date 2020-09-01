@@ -8,22 +8,8 @@ from email.utils import parseaddr
 from functools import cmp_to_key
 from urllib.parse import parse_qs, unquote, urlparse
 
-import pyotp
 import pytz
 import requests
-from packaging.version import Version
-from smartmin.views import (
-    SmartCreateView,
-    SmartCRUDL,
-    SmartFormView,
-    SmartListView,
-    SmartModelActionView,
-    SmartModelFormView,
-    SmartReadView,
-    SmartTemplateView,
-    SmartUpdateView,
-)
-from twilio.rest import Client
 
 from django import forms
 from django.conf import settings
@@ -47,6 +33,19 @@ from django.utils.translation import ugettext_lazy as _
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import View
 
+import pyotp
+from packaging.version import Version
+from smartmin.views import (
+    SmartCreateView,
+    SmartCRUDL,
+    SmartFormView,
+    SmartListView,
+    SmartModelActionView,
+    SmartModelFormView,
+    SmartReadView,
+    SmartTemplateView,
+    SmartUpdateView,
+)
 from temba.api.models import APIToken
 from temba.campaigns.models import Campaign
 from temba.channels.models import Channel
@@ -58,6 +57,7 @@ from temba.utils.http import http_headers
 from temba.utils.text import random_string
 from temba.utils.timezones import TimeZoneFormField
 from temba.utils.views import NonAtomicMixin
+from twilio.rest import Client
 
 from .models import BackupToken, Invitation, Org, OrgCache, TopUp, UserSettings, get_stripe_credentials
 from .tasks import apply_topups_task

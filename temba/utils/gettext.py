@@ -1,11 +1,11 @@
 import os
 from typing import NamedTuple
 
-import polib
-import pycountry
-
 from django.conf import settings
 from django.core.files.storage import default_storage
+
+import polib
+import pycountry
 
 from .uuid import uuid4
 

@@ -1,8 +1,7 @@
-import phonenumbers
-
 from django import forms
 from django.utils.translation import ugettext_lazy as _
 
+import phonenumbers
 from temba.channels.models import Channel
 from temba.channels.views import ALL_COUNTRIES, AuthenticatedExternalClaimView, ClaimViewMixin
 

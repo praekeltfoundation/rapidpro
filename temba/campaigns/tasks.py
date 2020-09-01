@@ -1,14 +1,13 @@
 import logging
 from datetime import timedelta
 
-from django_redis import get_redis_connection
-
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
 from celery.task import task
 
+from django_redis import get_redis_connection
 from temba.campaigns.models import CampaignEvent, EventFire
 from temba.utils import chunk_list
 from temba.utils.celery import nonoverlapping_task

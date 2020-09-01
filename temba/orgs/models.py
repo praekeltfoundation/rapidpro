@@ -7,17 +7,8 @@ from decimal import Decimal
 from enum import Enum
 from urllib.parse import quote, urlencode, urlparse
 
-import pycountry
 import pytz
-import regex
-import stripe
-import stripe.error
-from django_redis import get_redis_connection
-from packaging.version import Version
 from requests import Session
-from smartmin.models import SmartModel
-from timezone_field import TimeZoneField
-from twilio.rest import Client as TwilioClient
 
 from django.conf import settings
 from django.contrib.auth.models import Group, User
@@ -31,6 +22,13 @@ from django.utils.functional import cached_property
 from django.utils.text import slugify
 from django.utils.translation import ugettext_lazy as _
 
+import pycountry
+import regex
+import stripe
+import stripe.error
+from django_redis import get_redis_connection
+from packaging.version import Version
+from smartmin.models import SmartModel
 from temba import mailroom
 from temba.archives.models import Archive
 from temba.bundles import get_brand_bundles, get_bundle_map
@@ -44,6 +42,8 @@ from temba.utils.models import JSONAsTextField, SquashableModel
 from temba.utils.s3 import public_file_storage
 from temba.utils.text import generate_token, random_string
 from temba.utils.uuid import uuid4
+from timezone_field import TimeZoneField
+from twilio.rest import Client as TwilioClient
 
 logger = logging.getLogger(__name__)
 

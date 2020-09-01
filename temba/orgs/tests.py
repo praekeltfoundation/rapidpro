@@ -6,13 +6,9 @@ from decimal import Decimal
 from unittest.mock import Mock, patch
 from urllib.parse import urlencode
 
-import pyotp
 import pytz
-import stripe
-import stripe.error
 from bs4 import BeautifulSoup
 from dateutil.relativedelta import relativedelta
-from smartmin.csv_imports.models import ImportTask
 
 from django.conf import settings
 from django.contrib.auth.models import Group, User
@@ -23,6 +19,10 @@ from django.test.utils import override_settings
 from django.urls import reverse
 from django.utils import timezone
 
+import pyotp
+import stripe
+import stripe.error
+from smartmin.csv_imports.models import ImportTask
 from temba import mailroom
 from temba.airtime.models import AirtimeTransfer
 from temba.api.models import APIToken, Resthook, WebHookEvent, WebHookResult

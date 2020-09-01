@@ -1,11 +1,10 @@
 from datetime import timedelta
 
-from smartmin.csv_imports.models import ImportTask
-
 from django.utils import timezone
 
 from celery.task import task
 
+from smartmin.csv_imports.models import ImportTask
 from temba.contacts.models import TEL_SCHEME, ContactURN, ExportContactsTask
 from temba.contacts.tasks import export_contacts_task
 from temba.flows.models import ExportFlowResultsTask

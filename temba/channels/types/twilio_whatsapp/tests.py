@@ -1,13 +1,12 @@
 from unittest.mock import patch
 
-from twilio.base.exceptions import TwilioRestException
-
 from django.urls import reverse
 
 from temba.channels.models import Channel
 from temba.orgs.models import Org
 from temba.tests import TembaTest
 from temba.tests.twilio import MockRequestValidator, MockTwilioClient
+from twilio.base.exceptions import TwilioRestException
 
 
 class TwilioWhatsappTypeTest(TembaTest):

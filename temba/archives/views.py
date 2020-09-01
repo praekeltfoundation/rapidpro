@@ -1,10 +1,9 @@
 from gettext import gettext as _
 
-from smartmin.views import SmartCRUDL, SmartListView, SmartReadView
-
 from django.db.models import Sum
 from django.http import HttpResponseRedirect
 
+from smartmin.views import SmartCRUDL, SmartListView, SmartReadView
 from temba.orgs.views import OrgObjPermsMixin, OrgPermsMixin
 
 from .models import Archive

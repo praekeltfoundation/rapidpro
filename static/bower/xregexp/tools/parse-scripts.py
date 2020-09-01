@@ -2,10 +2,11 @@
 # By Mathias Bynens <http://mathiasbynens.be/>,
 # who is obviously not very good at Python
 
-import sys
 import string
+import sys
 from collections import defaultdict
 from itertools import groupby
+
 
 def sub(x):
 	return x[1] - x[0]

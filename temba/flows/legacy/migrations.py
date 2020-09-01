@@ -2,7 +2,6 @@ import copy
 from collections import defaultdict
 
 import regex
-
 from temba.contacts.models import ContactField, ContactGroup
 from temba.flows.models import Flow, RuleSet
 from temba.msgs.models import Label

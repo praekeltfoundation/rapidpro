@@ -4,8 +4,6 @@ import os
 import time
 from datetime import datetime, timedelta
 
-from xlsxlite.writer import XLSXBook
-
 from django.core.files import File
 from django.core.files.temp import NamedTemporaryFile
 from django.db import models
@@ -13,6 +11,7 @@ from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 
 from temba.assets.models import BaseAssetStore, get_asset_store
+from xlsxlite.writer import XLSXBook
 
 from . import analytics
 from .email import send_template_email

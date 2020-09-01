@@ -3,13 +3,14 @@ import logging
 from datetime import time, timedelta
 
 from dateutil.relativedelta import relativedelta
-from smartmin.models import SmartModel
 
 from django.contrib.humanize.templatetags.humanize import ordinal
 from django.db import models
 from django.utils import timezone
 from django.utils.timesince import timeuntil
 from django.utils.translation import ugettext_lazy as _
+
+from smartmin.models import SmartModel
 
 logger = logging.getLogger(__name__)
 

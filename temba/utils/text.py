@@ -6,10 +6,10 @@ import sys
 from collections import Counter
 from os import urandom
 
-import regex
-
 from django.utils.encoding import force_text
 from django.utils.text import slugify
+
+import regex
 
 CONTROL_CHARACTERES_REGEX = r"[\000-\010]|[\013-\014]|[\016-\037]"
 

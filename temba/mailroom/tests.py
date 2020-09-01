@@ -1,11 +1,10 @@
 from unittest.mock import patch
 
-from django_redis import get_redis_connection
-
 from django.conf import settings
 from django.test import override_settings
 from django.utils import timezone
 
+from django_redis import get_redis_connection
 from temba.channels.models import ChannelEvent
 from temba.flows.models import FlowRun, FlowStart
 from temba.mailroom.client import MailroomException, get_client

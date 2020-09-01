@@ -3,7 +3,6 @@ from datetime import datetime
 
 import pytz
 import redis
-from smartmin.tests import SmartminTest, SmartminTestMixin
 
 from django.conf import settings
 from django.contrib.auth.models import Group, User
@@ -13,6 +12,7 @@ from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase
 from django.utils import timezone
 
+from smartmin.tests import SmartminTest, SmartminTestMixin
 from temba.channels.models import Channel, ChannelLog
 from temba.contacts.models import URN, Contact, ContactField, ContactGroup
 from temba.flows.models import Flow, FlowRevision, FlowRun, FlowSession, clear_flow_users

@@ -3,11 +3,11 @@ import socket
 import sys
 from datetime import timedelta
 
-import iptools
-
 from django.utils.translation import ugettext_lazy as _
 
 from celery.schedules import crontab
+
+import iptools
 
 # -----------------------------------------------------------------------------------
 # Default to debugging

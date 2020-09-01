@@ -6,7 +6,6 @@ from decimal import Decimal
 from unittest.mock import patch
 from urllib.parse import quote_plus
 
-import iso8601
 import pytz
 from rest_framework import serializers
 from rest_framework.test import APIClient
@@ -20,6 +19,7 @@ from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
 
+import iso8601
 from temba.api.models import APIToken, Resthook, WebHookEvent
 from temba.archives.models import Archive
 from temba.campaigns.models import Campaign, CampaignEvent, EventFire

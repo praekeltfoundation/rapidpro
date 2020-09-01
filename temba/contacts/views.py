@@ -2,21 +2,6 @@ import logging
 from collections import OrderedDict
 from datetime import timedelta
 
-import regex
-from smartmin.csv_imports.models import ImportTask
-from smartmin.views import (
-    SmartCreateView,
-    SmartCRUDL,
-    SmartCSVImportView,
-    SmartDeleteView,
-    SmartFormView,
-    SmartListView,
-    SmartReadView,
-    SmartUpdateView,
-    SmartView,
-    smart_url,
-)
-
 from django import forms
 from django.conf import settings
 from django.contrib import messages
@@ -33,6 +18,20 @@ from django.utils.http import is_safe_url, urlquote_plus
 from django.utils.translation import ugettext_lazy as _
 from django.views import View
 
+import regex
+from smartmin.csv_imports.models import ImportTask
+from smartmin.views import (
+    SmartCreateView,
+    SmartCRUDL,
+    SmartCSVImportView,
+    SmartDeleteView,
+    SmartFormView,
+    SmartListView,
+    SmartReadView,
+    SmartUpdateView,
+    SmartView,
+    smart_url,
+)
 from temba.archives.models import Archive
 from temba.channels.models import Channel
 from temba.contacts.templatetags.contacts import MISSING_VALUE

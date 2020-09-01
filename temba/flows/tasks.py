@@ -1,9 +1,7 @@
 import logging
 from datetime import datetime, timedelta
 
-import iso8601
 import pytz
-from django_redis import get_redis_connection
 
 from django.conf import settings
 from django.utils import timezone
@@ -11,6 +9,8 @@ from django.utils.timesince import timesince
 
 from celery.task import task
 
+import iso8601
+from django_redis import get_redis_connection
 from temba.utils.celery import nonoverlapping_task
 
 from .models import (

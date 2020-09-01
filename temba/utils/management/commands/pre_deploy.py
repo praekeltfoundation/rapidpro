@@ -1,8 +1,7 @@
-from smartmin.csv_imports.models import ImportTask
-
 from django.core.management import BaseCommand
 from django.utils.timesince import timesince
 
+from smartmin.csv_imports.models import ImportTask
 from temba.contacts.models import ExportContactsTask
 from temba.flows.models import ExportFlowResultsTask
 from temba.msgs.models import ExportMessagesTask

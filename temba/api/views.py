@@ -1,8 +1,7 @@
-from smartmin.views import SmartCRUDL, SmartListView, SmartReadView, SmartView
-
 from django.http import JsonResponse
 from django.views.generic import View
 
+from smartmin.views import SmartCRUDL, SmartListView, SmartReadView, SmartView
 from temba.orgs.views import OrgObjPermsMixin, OrgPermsMixin
 
 from .models import APIToken, Resthook, WebHookResult

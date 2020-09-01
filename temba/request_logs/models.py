@@ -1,13 +1,12 @@
 import logging
 from datetime import timedelta
 
-from requests_toolbelt.utils import dump
-
 from django.db import models
 from django.db.models import Index
 from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 
+from requests_toolbelt.utils import dump
 from temba.orgs.models import Org
 from temba.utils import chunk_list
 

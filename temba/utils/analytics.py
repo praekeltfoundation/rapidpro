@@ -2,14 +2,13 @@ import logging
 import time
 from random import randint
 
+from django.conf import settings
+from django.utils import timezone
+
 import analytics as segment_analytics
 from intercom.client import Client as IntercomClient
 from intercom.errors import ResourceNotFound
 from librato_bg import Client as LibratoClient
-
-from django.conf import settings
-from django.utils import timezone
-
 from temba.utils import json
 
 logger = logging.getLogger(__name__)

@@ -1,6 +1,3 @@
-import regex
-from smartmin.views import SmartCreateView, SmartCRUDL, SmartListView, SmartTemplateView, SmartUpdateView
-
 from django import forms
 from django.db.models import Min
 from django.http import HttpResponse, HttpResponseRedirect
@@ -9,6 +6,8 @@ from django.utils import timezone
 from django.utils.timezone import get_current_timezone_name
 from django.utils.translation import ugettext_lazy as _
 
+import regex
+from smartmin.views import SmartCreateView, SmartCRUDL, SmartListView, SmartTemplateView, SmartUpdateView
 from temba.channels.models import Channel
 from temba.contacts.models import ContactGroup, ContactURN
 from temba.contacts.omnibox import omnibox_deserialize, omnibox_serialize

@@ -1,13 +1,12 @@
 import logging
 from abc import ABCMeta
 
-from smartmin.models import SmartModel
-
 from django.conf.urls import url
 from django.db import models
 from django.template import Engine
 from django.utils import timezone
 
+from smartmin.models import SmartModel
 from temba.utils import on_transaction_commit
 from temba.utils.models import JSONField
 from temba.utils.uuid import uuid4

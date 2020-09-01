@@ -1,12 +1,11 @@
 from unittest.mock import patch
 
-from twython import TwythonError
-
 from django.test import override_settings
 from django.urls import reverse
 
 from temba.contacts.models import URN
 from temba.tests import TembaTest, mock_mailroom
+from twython import TwythonError
 
 from ...models import Channel
 from .client import TwitterClient

@@ -6,13 +6,6 @@ from datetime import date, timedelta
 from enum import Enum
 from urllib.request import urlopen
 
-import iso8601
-import regex
-from django_redis import get_redis_connection
-from packaging.version import Version
-from smartmin.models import SmartModel
-from xlsxlite.writer import XLSXBook
-
 from django.conf import settings
 from django.contrib.auth.models import Group, User
 from django.core.cache import cache
@@ -23,6 +16,11 @@ from django.db.models.functions import TruncDate
 from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 
+import iso8601
+import regex
+from django_redis import get_redis_connection
+from packaging.version import Version
+from smartmin.models import SmartModel
 from temba import mailroom
 from temba.assets.models import register_asset_store
 from temba.channels.models import Channel, ChannelConnection
@@ -47,6 +45,7 @@ from temba.utils.models import (
 from temba.utils.s3 import public_file_storage
 from temba.utils.uuid import uuid4
 from temba.values.constants import Value
+from xlsxlite.writer import XLSXBook
 
 from . import legacy
 

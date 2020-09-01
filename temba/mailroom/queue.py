@@ -1,10 +1,9 @@
 import time
 from enum import Enum
 
-from django_redis import get_redis_connection
-
 from django.utils import timezone
 
+from django_redis import get_redis_connection
 from temba.utils import json
 
 HIGH_PRIORITY = -10000000

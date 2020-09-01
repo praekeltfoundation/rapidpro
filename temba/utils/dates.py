@@ -1,11 +1,12 @@
 import calendar
 import datetime
 
-import iso8601
 import pytz
-import regex
 
 from django.utils import timezone
+
+import iso8601
+import regex
 
 # max offset postgres supports for a timezone
 MAX_UTC_OFFSET = 14 * 60 * 60

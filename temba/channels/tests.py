@@ -7,9 +7,6 @@ from datetime import datetime, timedelta
 from unittest.mock import call, patch
 from urllib.parse import quote
 
-from django_redis import get_redis_connection
-from smartmin.tests import SmartminTest
-
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.core import mail
@@ -20,6 +17,8 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.encoding import force_bytes, force_text
 
+from django_redis import get_redis_connection
+from smartmin.tests import SmartminTest
 from temba.channels.views import channel_status_processor
 from temba.contacts.models import TEL_SCHEME, TWITTER_SCHEME, URN, Contact, ContactGroup, ContactURN
 from temba.ivr.models import IVRCall

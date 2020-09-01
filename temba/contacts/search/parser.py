@@ -5,13 +5,13 @@ from functools import reduce
 from typing import NamedTuple
 
 import pytz
+
+from django.utils.encoding import force_text
+
 import regex
 from antlr4 import CommonTokenStream, InputStream, ParseTreeVisitor
 from antlr4.error.Errors import NoViableAltException, ParseCancellationException
 from antlr4.error.ErrorStrategy import BailErrorStrategy
-
-from django.utils.encoding import force_text
-
 from temba import mailroom
 from temba.contacts.models import URN_SCHEME_CONFIG, ContactField
 from temba.utils.dates import date_to_day_range_utc, str_to_date, str_to_datetime

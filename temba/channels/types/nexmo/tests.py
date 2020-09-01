@@ -1,9 +1,8 @@
 from unittest.mock import patch
 
-import nexmo
-
 from django.urls import reverse
 
+import nexmo
 from temba.channels.models import Channel
 from temba.tests import MockResponse, TembaTest
 from temba.utils import json

@@ -1,12 +1,11 @@
-from smartmin.views import SmartFormView
-from twython import TwythonError
-
 from django import forms
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.utils.translation import ugettext_lazy as _
 
+from smartmin.views import SmartFormView
 from temba.utils.views import NonAtomicMixin
+from twython import TwythonError
 
 from ...models import Channel
 from ...views import ClaimViewMixin, UpdateChannelForm

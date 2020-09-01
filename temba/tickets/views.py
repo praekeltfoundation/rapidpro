@@ -1,5 +1,3 @@
-from smartmin.views import SmartCRUDL, SmartDeleteView, SmartFormView, SmartListView, SmartTemplateView
-
 from django import forms
 from django.contrib import messages
 from django.http import HttpResponseRedirect
@@ -8,6 +6,7 @@ from django.utils.functional import cached_property
 from django.utils.html import mark_safe
 from django.utils.translation import ugettext_lazy as _
 
+from smartmin.views import SmartCRUDL, SmartDeleteView, SmartFormView, SmartListView, SmartTemplateView
 from temba.orgs.views import ModalMixin, OrgObjPermsMixin, OrgPermsMixin
 from temba.utils.views import BaseActionForm
 

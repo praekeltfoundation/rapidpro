@@ -1,10 +1,9 @@
-from smartmin.models import SmartModel
-
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 
+from smartmin.models import SmartModel
 from temba.channels.models import Channel
 from temba.contacts.models import Contact, ContactGroup
 from temba.flows.models import Flow

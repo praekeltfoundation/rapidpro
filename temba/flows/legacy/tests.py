@@ -1,9 +1,8 @@
 from unittest.mock import patch
 
-from packaging.version import Version
-
 from django.urls import reverse
 
+from packaging.version import Version
 from temba.contacts.models import ContactGroup
 from temba.flows.models import ActionSet, Flow, FlowRevision, RuleSet, get_flow_user
 from temba.msgs.models import Label

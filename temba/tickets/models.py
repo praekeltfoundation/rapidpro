@@ -1,7 +1,5 @@
 from abc import ABCMeta
 
-from smartmin.models import SmartModel
-
 from django.conf.urls import url
 from django.contrib.postgres.fields import JSONField
 from django.db import models
@@ -10,6 +8,7 @@ from django.template import Engine
 from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 
+from smartmin.models import SmartModel
 from temba import mailroom
 from temba.contacts.models import Contact
 from temba.orgs.models import Org

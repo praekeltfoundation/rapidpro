@@ -8,13 +8,7 @@ from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import MagicMock, PropertyMock, patch
 
-import intercom.errors
-import iso8601
-import pycountry
 import pytz
-from django_redis import get_redis_connection
-from openpyxl import load_workbook
-from smartmin.tests import SmartminTestMixin
 
 from django.conf import settings
 from django.contrib.auth.models import User
@@ -28,7 +22,13 @@ from django.utils import timezone
 
 from celery.app.task import Task
 
+import intercom.errors
+import iso8601
+import pycountry
 import temba.utils.analytics
+from django_redis import get_redis_connection
+from openpyxl import load_workbook
+from smartmin.tests import SmartminTestMixin
 from temba.contacts.models import Contact, ContactField, ContactGroup, ContactGroupCount, ExportContactsTask
 from temba.flows.models import FlowRun
 from temba.orgs.models import Org, UserSettings

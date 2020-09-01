@@ -1,8 +1,7 @@
-from smartmin.views import SmartFormView
-
 from django import forms
 from django.utils.translation import ugettext_lazy as _
 
+from smartmin.views import SmartFormView
 from temba.utils.fields import ExternalURLField
 
 from ...models import Channel

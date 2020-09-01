@@ -7,12 +7,7 @@ from decimal import Decimal
 from itertools import chain
 from typing import Dict, List
 
-import iso8601
-import phonenumbers
 import pytz
-import regex
-from smartmin.csv_imports.models import ImportTask
-from smartmin.models import SmartImportRowError, SmartModel
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -22,6 +17,11 @@ from django.db.models import Count, Max, Q, Sum
 from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 
+import iso8601
+import phonenumbers
+import regex
+from smartmin.csv_imports.models import ImportTask
+from smartmin.models import SmartImportRowError, SmartModel
 from temba import mailroom
 from temba.assets.models import register_asset_store
 from temba.channels.models import Channel, ChannelEvent

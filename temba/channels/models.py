@@ -5,13 +5,6 @@ from datetime import timedelta
 from enum import Enum
 from xml.sax.saxutils import escape
 
-import phonenumbers
-from django_countries.fields import CountryField
-from phonenumbers import NumberParseException
-from pyfcm import FCMNotification
-from smartmin.models import SmartModel
-from twilio.base.exceptions import TwilioRestException
-
 from django.conf import settings
 from django.conf.urls import url
 from django.contrib.auth.models import Group, User
@@ -26,6 +19,11 @@ from django.utils import timezone
 from django.utils.http import urlquote_plus
 from django.utils.translation import ugettext_lazy as _
 
+import phonenumbers
+from django_countries.fields import CountryField
+from phonenumbers import NumberParseException
+from pyfcm import FCMNotification
+from smartmin.models import SmartModel
 from temba import mailroom
 from temba.orgs.models import Org
 from temba.utils import analytics, get_anonymous_user, json, on_transaction_commit, redact
@@ -33,6 +31,7 @@ from temba.utils.email import send_template_email
 from temba.utils.gsm7 import calculate_num_segments
 from temba.utils.models import JSONAsTextField, SquashableModel, TembaModel, generate_uuid
 from temba.utils.text import random_string
+from twilio.base.exceptions import TwilioRestException
 
 logger = logging.getLogger(__name__)
 

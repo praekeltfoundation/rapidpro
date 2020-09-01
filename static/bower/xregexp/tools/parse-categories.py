@@ -2,9 +2,10 @@
 # By Mathias Bynens <http://mathiasbynens.be/>
 # Based on the work of Yusuke Suzuki <utatane.tea@gmail.com> in http://code.google.com/p/esprima/issues/detail?id=110
 
-import sys
-import string
 import re
+import string
+import sys
+
 
 class RegExpGenerator(object):
 	def __init__(self, detector):
