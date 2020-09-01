@@ -1,5 +1,4 @@
 from unittest.mock import patch
-from uuid import uuid4
 
 from packaging.version import Version
 
@@ -10,6 +9,7 @@ from temba.flows.models import ActionSet, Flow, FlowRevision, RuleSet, get_flow_
 from temba.msgs.models import Label
 from temba.tests import TembaTest, matchers
 from temba.utils import json
+from temba.utils.uuid import uuid4
 from temba.values.constants import Value
 
 from .definition import InGroupTest
@@ -479,7 +479,6 @@ class FlowMigrationTest(TembaTest):
 
     def test_migrate_to_11_12_other_org_new_flow(self):
         # change ownership of the channel it's referencing
-        self.setUpSecondaryOrg()
         self.channel.org = self.org2
         self.channel.save(update_fields=("org",))
 
@@ -499,7 +498,6 @@ class FlowMigrationTest(TembaTest):
         self.assertEqual(flow.revisions.order_by("revision").last().spec_version, "11.11")
 
         # change ownership of the channel it's referencing
-        self.setUpSecondaryOrg()
         self.channel.org = self.org2
         self.channel.save(update_fields=("org",))
 

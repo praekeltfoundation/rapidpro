@@ -8,7 +8,6 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.timezone import get_current_timezone_name
 from django.utils.translation import ugettext_lazy as _
-from django.views.decorators.csrf import csrf_exempt
 
 from temba.channels.models import Channel
 from temba.contacts.models import ContactGroup, ContactURN
@@ -21,7 +20,7 @@ from temba.schedules.models import Schedule
 from temba.schedules.views import BaseScheduleForm
 from temba.utils import analytics, json
 from temba.utils.fields import CompletionTextarea, JSONField, OmniboxChoice, SelectWidget
-from temba.utils.views import BaseActionForm
+from temba.utils.views import BulkActionMixin
 
 from .models import Trigger
 
@@ -348,31 +347,6 @@ class ReferralTriggerForm(BaseTriggerForm):
         fields = ("channel", "referrer_id", "flow")
 
 
-class TriggerActionForm(BaseActionForm):
-    allowed_actions = (("archive", _("Archive Triggers")), ("restore", _("Restore Triggers")))
-
-    model = Trigger
-    has_is_active = True
-
-    class Meta:
-        fields = ("action", "objects")
-
-
-class TriggerActionMixin(SmartListView):
-    @csrf_exempt
-    def dispatch(self, *args, **kwargs):
-        return super().dispatch(*args, **kwargs)
-
-    def post(self, request, *args, **kwargs):
-        user = self.request.user
-        form = TriggerActionForm(self.request.POST, org=user.get_org(), user=user)
-
-        if form.is_valid():
-            form.execute()
-
-        return self.get(request, *args, **kwargs)
-
-
 class TriggerCRUDL(SmartCRUDL):
     model = Trigger
     actions = (
@@ -493,7 +467,7 @@ class TriggerCRUDL(SmartCRUDL):
             response["REDIRECT"] = self.get_success_url()
             return response
 
-    class BaseList(TriggerActionMixin, OrgMixin, OrgPermsMixin, SmartListView):
+    class BaseList(OrgMixin, OrgPermsMixin, BulkActionMixin, SmartListView):
         fields = ("name", "modified_on")
         default_template = "triggers/trigger_list.html"
         default_order = ("-modified_on",)
@@ -504,7 +478,6 @@ class TriggerCRUDL(SmartCRUDL):
             context["org_has_triggers"] = Trigger.objects.filter(org=self.request.user.get_org()).count()
             context["folders"] = self.get_folders()
             context["request_url"] = self.request.path
-            context["actions"] = self.actions
             return context
 
         def get_folders(self):
@@ -529,7 +502,7 @@ class TriggerCRUDL(SmartCRUDL):
     class List(BaseList):
         fields = ("keyword", "flow")
         link_fields = ("keyword", "flow")
-        actions = ("archive",)
+        bulk_actions = ("archive",)
         title = _("Triggers")
 
         def pre_process(self, request, *args, **kwargs):
@@ -554,7 +527,7 @@ class TriggerCRUDL(SmartCRUDL):
             return qs
 
     class Archived(BaseList):
-        actions = ("restore",)
+        bulk_actions = ("restore",)
         fields = ("keyword", "flow")
 
         def get_queryset(self, *args, **kwargs):
@@ -578,7 +551,7 @@ class TriggerCRUDL(SmartCRUDL):
             return obj
 
         def form_valid(self, form):
-            analytics.track(self.request.user.username, "temba.trigger_created_keyword")
+            analytics.track(self.request.user.username, "temba.trigger_created", dict(type="keyword"))
             return super().form_valid(form)
 
         def get_form_kwargs(self):
@@ -608,7 +581,7 @@ class TriggerCRUDL(SmartCRUDL):
                 flow=group_flow,
             )
 
-            analytics.track(self.request.user.username, "temba.trigger_created_register", dict(name=join_group.name))
+            analytics.track(self.request.user.username, "temba.trigger_created", dict(type="register"))
 
             response = self.render_to_response(self.get_context_data(form=form))
             response["REDIRECT"] = self.get_success_url()
@@ -641,7 +614,7 @@ class TriggerCRUDL(SmartCRUDL):
                 referrer_id=form.cleaned_data["referrer_id"],
             )
 
-            analytics.track(self.request.user.username, "temba.trigger_created_referral")
+            analytics.track(self.request.user.username, "temba.trigger_created", dict(type="referral"))
 
             response = self.render_to_response(self.get_context_data(form=form))
             response["REDIRECT"] = self.get_success_url()
@@ -666,7 +639,7 @@ class TriggerCRUDL(SmartCRUDL):
                 return super().form_invalid(form)
 
         def form_valid(self, form):
-            analytics.track(self.request.user.username, "temba.trigger_created_schedule")
+            analytics.track(self.request.user.username, "temba.trigger_created", dict(type="schedule"))
             org = self.request.user.get_org()
             start_time = form.get_start_time(org.timezone)
 
@@ -748,7 +721,7 @@ class TriggerCRUDL(SmartCRUDL):
                 flow=form.cleaned_data["flow"],
             )
 
-            analytics.track(self.request.user.username, "temba.trigger_created_missed_call")
+            analytics.track(self.request.user.username, "temba.trigger_created", dict(type="missed_call"))
 
             response = self.render_to_response(self.get_context_data(form=form))
             response["REDIRECT"] = self.get_success_url()
@@ -786,7 +759,7 @@ class TriggerCRUDL(SmartCRUDL):
             for group in groups:
                 trigger.groups.add(group)
 
-            analytics.track(self.request.user.username, "temba.trigger_created_catchall")
+            analytics.track(self.request.user.username, "temba.trigger_created", dict(type="catchall"))
 
             response = self.render_to_response(self.get_context_data(form=form))
             response["REDIRECT"] = self.get_success_url()
@@ -808,7 +781,7 @@ class TriggerCRUDL(SmartCRUDL):
                 org, user, Trigger.TYPE_NEW_CONVERSATION, form.cleaned_data["flow"], form.cleaned_data["channel"]
             )
 
-            analytics.track(self.request.user.username, "temba.trigger_created_new_conversation")
+            analytics.track(self.request.user.username, "temba.trigger_created", dict(type="new_conversation"))
 
             response = self.render_to_response(self.get_context_data(form=form))
             response["REDIRECT"] = self.get_success_url()

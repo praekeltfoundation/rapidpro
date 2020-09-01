@@ -1,9 +1,10 @@
-from uuid import uuid4
-
 from smartmin.views import SmartFormView
 
 from django import forms
 from django.utils.translation import ugettext_lazy as _
+
+from temba.utils.fields import ExternalURLField
+from temba.utils.uuid import uuid4
 
 from ...models import Channel
 from ...views import ALL_COUNTRIES, ClaimViewMixin
@@ -20,7 +21,7 @@ class ClaimView(ClaimViewMixin, SmartFormView):
         country = forms.ChoiceField(
             choices=ALL_COUNTRIES, label=_("Country"), help_text=_("The country this phone number is used in")
         )
-        url = forms.URLField(
+        url = ExternalURLField(
             max_length=1024,
             label=_("Send URL"),
             help_text=_(

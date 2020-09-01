@@ -6,42 +6,16 @@ from django.core.exceptions import ValidationError
 from django.http import Http404, HttpResponseRedirect
 from django.urls import reverse
 from django.utils.translation import ugettext_lazy as _
-from django.views.decorators.csrf import csrf_exempt
 
 from temba.contacts.models import ContactField, ContactGroup
 from temba.flows.models import Flow
 from temba.msgs.models import Msg
 from temba.orgs.views import ModalMixin, OrgObjPermsMixin, OrgPermsMixin
 from temba.utils.fields import CompletionTextarea, InputWidget, SelectWidget
-from temba.utils.views import BaseActionForm
+from temba.utils.views import BulkActionMixin
 from temba.values.constants import Value
 
 from .models import Campaign, CampaignEvent, EventFire
-
-
-class CampaignActionForm(BaseActionForm):
-    allowed_actions = (("archive", "Archive Campaigns"), ("restore", "Restore Campaigns"))
-
-    model = Campaign
-    has_is_active = True
-
-    class Meta:
-        fields = ("action", "objects")
-
-
-class CampaignActionMixin(SmartListView):
-    @csrf_exempt
-    def dispatch(self, *args, **kwargs):
-        return super().dispatch(*args, **kwargs)
-
-    def post(self, request, *args, **kwargs):
-        user = self.request.user
-        form = CampaignActionForm(self.request.POST, org=user.get_org(), user=user)
-
-        if form.is_valid():
-            form.execute()
-
-        return self.get(request, *args, **kwargs)
 
 
 class UpdateCampaignForm(forms.ModelForm):
@@ -224,7 +198,7 @@ class CampaignCRUDL(SmartCRUDL):
             kwargs["user"] = self.request.user
             return kwargs
 
-    class BaseList(CampaignActionMixin, OrgMixin, OrgPermsMixin, SmartListView):
+    class BaseList(OrgMixin, OrgPermsMixin, BulkActionMixin, SmartListView):
         fields = ("name", "group")
         default_template = "campaigns/campaign_list.html"
         default_order = ("-modified_on",)
@@ -234,7 +208,6 @@ class CampaignCRUDL(SmartCRUDL):
             context["org_has_campaigns"] = Campaign.objects.filter(org=self.request.user.get_org()).count()
             context["folders"] = self.get_folders()
             context["request_url"] = self.request.path
-            context["actions"] = self.actions
             return context
 
         def get_folders(self):
@@ -258,7 +231,7 @@ class CampaignCRUDL(SmartCRUDL):
 
     class List(BaseList):
         fields = ("name", "group")
-        actions = ("archive",)
+        bulk_actions = ("archive",)
         search_fields = ("name__icontains", "group__name__icontains")
 
         def get_queryset(self, *args, **kwargs):
@@ -268,7 +241,7 @@ class CampaignCRUDL(SmartCRUDL):
 
     class Archived(BaseList):
         fields = ("name",)
-        actions = ("restore",)
+        bulk_actions = ("restore",)
 
         def get_queryset(self, *args, **kwargs):
             qs = super().get_queryset(*args, **kwargs)
@@ -594,7 +567,7 @@ class CampaignEventCRUDL(SmartCRUDL):
         def get_cancel_url(self):  # pragma: needs cover
             return reverse("campaigns.campaign_read", args=[self.object.campaign.pk])
 
-    class Update(OrgPermsMixin, ModalMixin, SmartUpdateView):
+    class Update(OrgObjPermsMixin, ModalMixin, SmartUpdateView):
         success_message = ""
         form_class = CampaignEventForm
         submit_button_name = _("Update Event")
@@ -620,6 +593,9 @@ class CampaignEventCRUDL(SmartCRUDL):
             kwargs = super().get_form_kwargs()
             kwargs["user"] = self.request.user
             return kwargs
+
+        def get_object_org(self):
+            return self.get_object().campaign.org
 
         def get_context_data(self, **kwargs):
             return super().get_context_data(**kwargs)

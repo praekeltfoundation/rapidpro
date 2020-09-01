@@ -11,7 +11,7 @@ from antlr4.error.Errors import NoViableAltException, ParseCancellationException
 from antlr4.error.ErrorStrategy import BailErrorStrategy
 
 from django.utils.encoding import force_text
-from django.utils.translation import gettext as _
+from django.utils.translation import ugettext_lazy as _
 
 from temba import mailroom
 from temba.contacts.models import URN_SCHEME_CONFIG, ContactField
@@ -27,14 +27,38 @@ class SearchException(Exception):
     Exception class for unparseable search queries
     """
 
-    def __init__(self, message):
+    messages = {
+        "unexpected_token": _("Invalid query syntax at '%(token)s'"),
+        "invalid_number": _("Unable to convert '%(value)s' to a number"),
+        "invalid_date": _("Unable to convert '%(value)s' to a date"),
+        "invalid_language": _("'%(value)s' is not a valid language code"),
+        "invalid_group": _("'%(value)s' is not a valid group name"),
+        "invalid_partial_name": _("Using ~ with name requires token of at least %(min_token_length)s characters"),
+        "invalid_partial_urn": _("Using ~ with URN requires value of at least %(min_value_length)s characters"),
+        "unsupported_contains": _("Can only use ~ with name or URN values"),
+        "unsupported_comparison": _("Can only use %(operator)s with number or date values"),
+        "unsupported_setcheck": _("Can't check whether '%(property)s' is set or not set"),
+        "unknown_property": _("Can't resolve '%(property)s' to a field or URN scheme"),
+        "redacted_urns": _("Can't query on URNs in an anonymous workspace"),
+    }
+
+    def __init__(self, message, code=None, extra=None):
         self.message = message
+        self.code = code
+        self.extra = extra
+
+    @classmethod
+    def from_mailroom_exception(cls, e):
+        return cls(e.response["error"], e.response.get("code"), e.response.get("extra", {}))
 
     def __str__(self):
+        if self.code and self.code in self.messages:
+            return self.messages[self.code] % self.extra
+
         return force_text(self.message)
 
 
-class ContactQuery(object):
+class ContactQuery:
     """
     A parsed contact query consisting of a hierarchy of conditions and boolean combinations of conditions
     """
@@ -70,8 +94,6 @@ class ContactQuery(object):
         prop_map = {p: None for p in all_props}
 
         all_contact_fields = ContactField.all_fields.filter(org=org, key__in=all_props, is_active=True)
-        if not org.is_anon:
-            all_contact_fields.exclude(key="id")
 
         user_contactfields = (cf for cf in all_contact_fields if cf.field_type == ContactField.FIELD_TYPE_USER)
         for field in user_contactfields:
@@ -81,6 +103,9 @@ class ContactQuery(object):
         for attr in system_contactfields:
             prop_map[attr.key] = (self.PROP_ATTRIBUTE, attr)
 
+        prop_map["uuid"] = (self.PROP_ATTRIBUTE, ContactField(key="uuid"))
+        prop_map["urn"] = (self.PROP_ATTRIBUTE, ContactField(key="urn"))
+
         for scheme in self.SEARCHABLE_SCHEMES:
             if scheme in prop_map.keys():
                 prop_map[scheme] = (self.PROP_SCHEME, scheme)
@@ -88,7 +113,7 @@ class ContactQuery(object):
         if validate:
             for prop, prop_obj in prop_map.items():
                 if not prop_obj:
-                    raise SearchException(_(f"Unrecognized field: '{prop}'"))
+                    raise SearchException(f"Unrecognized field: '{prop}'")
 
         return prop_map
 
@@ -136,7 +161,7 @@ class Condition(QueryNode):
         try:
             return Decimal(val)
         except Exception:
-            raise SearchException(_("f'{val}' isn't a valid number"))
+            raise SearchException(f"'{val}' isn't a valid number")
 
     def as_text(self):
         try:
@@ -165,7 +190,7 @@ class Condition(QueryNode):
                 elif self.comparator == "!=":
                     return contact_value != query_value
                 else:
-                    raise SearchException(_(f"Unknown text comparator: '{self.comparator}'"))
+                    raise SearchException(f"Unknown text comparator: '{self.comparator}'")
 
             elif field.value_type == Value.TYPE_NUMBER:
                 query_value = self._parse_number(self.value)
@@ -189,12 +214,12 @@ class Condition(QueryNode):
                 elif self.comparator == "<=":
                     return contact_value <= query_value
                 else:
-                    raise SearchException(_(f"Unknown number comparator: '{self.comparator}'"))
+                    raise SearchException(f"Unknown number comparator: '{self.comparator}'")
 
             elif field.value_type == Value.TYPE_DATETIME:
                 query_value = str_to_date(self.value, field.org.get_dayfirst())
                 if not query_value:
-                    raise SearchException(_(f"Unable to parse the date '{self.value}'"))
+                    raise SearchException(f"Unable to parse the date '{self.value}'")
 
                 lower_bound, upper_bound = date_to_day_range_utc(query_value, org)
 
@@ -217,7 +242,7 @@ class Condition(QueryNode):
                 elif self.comparator == "<=":
                     return contact_value_utc < upper_bound
                 else:
-                    raise SearchException(_(f"Unknown datetime comparator: '{self.comparator}'"))
+                    raise SearchException(f"Unknown datetime comparator: '{self.comparator}'")
 
             elif field.value_type in (Value.TYPE_STATE, Value.TYPE_DISTRICT, Value.TYPE_WARD):
                 query_value = self.value.upper()
@@ -235,19 +260,22 @@ class Condition(QueryNode):
 
                     contact_value = state_value.upper().split(" > ")[-1]
                 else:  # pragma: no cover
-                    raise SearchException(_(f"Unknown location type: '{field.value_type}'"))
+                    raise SearchException(f"Unknown location type: '{field.value_type}'")
 
                 if self.comparator == "=":
                     return contact_value == query_value
                 elif self.comparator == "!=":
                     return contact_value != query_value
                 else:
-                    raise SearchException(_(f"Unsupported comparator '{self.comparator}' for location field"))
+                    raise SearchException(f"Unsupported comparator '{self.comparator}' for location field")
 
             else:  # pragma: no cover
-                raise SearchException(_(f"Unrecognized contact field type '{field.value_type}'"))
+                raise SearchException(f"Unrecognized contact field type '{field.value_type}'")
 
         elif prop_type == ContactQuery.PROP_SCHEME:
+            if org.is_anon:
+                raise SearchException("Cannot query on redacted URNs")
+
             for urn in contact_json.get("urns"):
                 if urn.get("scheme") == field:
                     contact_value = urn.get("path").upper()
@@ -260,7 +288,7 @@ class Condition(QueryNode):
                         if query_value in contact_value:
                             return True
                     else:
-                        raise SearchException(_(f"Unknown urn scheme comparator: '{self.comparator}'"))
+                        raise SearchException(f"Unknown urn scheme comparator: '{self.comparator}'")
 
             return False
 
@@ -280,12 +308,12 @@ class Condition(QueryNode):
                 elif self.comparator == "!=":
                     return contact_value != query_value
                 else:
-                    raise SearchException(_(f"Unknown language comparator: '{self.comparator}'"))
+                    raise SearchException(f"Unknown language comparator: '{self.comparator}'")
 
             elif field_key == "created_on":
                 query_value = str_to_date(self.value, field.org.get_dayfirst())
                 if not query_value:
-                    raise SearchException(_(f"Unable to parse the date '{self.value}'"))
+                    raise SearchException(f"Unable to parse the date '{self.value}'")
 
                 lower_bound, upper_bound = date_to_day_range_utc(query_value, org)
 
@@ -304,7 +332,7 @@ class Condition(QueryNode):
                 elif self.comparator == "<=":
                     return contact_value_utc < upper_bound
                 else:
-                    raise SearchException(_(f"Unknown created_on comparator: '{self.comparator}'"))
+                    raise SearchException(f"Unknown created_on comparator: '{self.comparator}'")
 
             elif field_key == "name":
                 query_value = self.value.upper()
@@ -321,11 +349,46 @@ class Condition(QueryNode):
                 elif self.comparator == "!=":
                     return contact_value != query_value
                 else:  # pragma: no cover
-                    raise SearchException(_(f"Unknown name comparator: '{self.comparator}'"))
+                    raise SearchException(f"Unknown name comparator: '{self.comparator}'")
+
+            elif field_key == "urn":
+                if org.is_anon:
+                    raise SearchException("Cannot query on redacted URNs")
+
+                query_value = self.value.lower()
+                if self.comparator == "=":
+                    for urn in contact_json.get("urns"):
+                        if urn.get("path").lower() == query_value:
+                            return True
+                    return False
+                if self.comparator == "!=":
+                    for urn in contact_json.get("urns"):
+                        if urn.get("path").lower() == query_value:
+                            return False
+                    return True
+                elif self.comparator == "~":
+                    for urn in contact_json.get("urns"):
+                        if query_value in urn.get("path").lower():
+                            return True
+                    return False
+                else:
+                    raise SearchException(f"Unknown urn comparator: '{self.comparator}'")
+
+            elif field_key == "uuid":
+                query_value = self.value.lower()
+                contact_value = contact_json["uuid"]
+
+                if self.comparator == "=":
+                    return contact_value == query_value
+                elif self.comparator == "!=":
+                    return contact_value != query_value
+                else:
+                    raise SearchException(f"Unknown UUID comparator: '{self.comparator}'")
+
             else:
-                raise SearchException(_(f"No support for attribute field: '{field}'"))
+                raise SearchException(f"No support for attribute field: '{field}'")
         else:  # pragma: no cover
-            raise SearchException(_(f"Unrecognized contact field type '{prop_type}'"))
+            raise SearchException(f"Unrecognized contact field type '{prop_type}'")
 
     def __eq__(self, other):
         return (
@@ -360,7 +423,7 @@ class IsSetCondition(Condition):
         elif self.comparator.lower() in self.IS_NOT_SET_LOOKUPS:
             is_set = False
         else:  # pragma: no cover
-            raise SearchException(_("Invalid operator for empty string comparison"))
+            raise SearchException("Invalid operator for empty string comparison")
 
         if prop_type == ContactQuery.PROP_FIELD:
             field_uuid = str(field.uuid)
@@ -457,7 +520,7 @@ class IsSetCondition(Condition):
                             return True
 
                 else:  # pragma: no cover
-                    raise SearchException(_(f"Unrecognized contact field type '{field.value_type}'"))
+                    raise SearchException(f"Unrecognized contact field type '{field.value_type}'")
 
         elif prop_type == ContactQuery.PROP_SCHEME:
             urn_exists = next((urn for urn in contact_json.get("urns") if urn.get("scheme") == field), None)
@@ -501,10 +564,16 @@ class IsSetCondition(Condition):
                     else:
                         return True
 
+            elif field_key == "urn":
+                if is_set:
+                    return bool(contact_json["urns"])
+                else:
+                    return not bool(contact_json["urns"])
+
             else:  # pragma: no cover
-                raise SearchException(_(f"No support for attribute field: '{field}'"))
+                raise SearchException(f"No support for attribute field: '{field}'")
         else:  # pragma: no cover
-            raise SearchException(_(f"Unrecognized contact field type '{prop_type}'"))
+            raise SearchException(f"Unrecognized contact field type '{prop_type}'")
 
 
 class BoolCombination(QueryNode):
@@ -690,11 +759,18 @@ class ContactQLVisitor(ParseTreeVisitor):
         return value.replace(r"\"", '"')  # unescape embedded quotes
 
 
+class Metadata(NamedTuple):
+    attributes: list = []
+    schemes: list = []
+    fields: list = []
+    groups: list = []
+    allow_as_group: bool = False
+
+
 class ParsedQuery(NamedTuple):
     query: str
-    fields: list
     elastic_query: dict
-    allow_as_group: bool
+    metadata: Metadata = Metadata()
 
 
 def parse_query(org_id, query, group_uuid=""):
@@ -704,20 +780,17 @@ def parse_query(org_id, query, group_uuid=""):
     try:
         client = mailroom.get_client()
         response = client.parse_query(org_id, query, group_uuid=str(group_uuid))
-        return ParsedQuery(
-            response["query"], response["fields"], response["elastic_query"], response.get("allow_as_group", False)
-        )
+        return ParsedQuery(response["query"], response["elastic_query"], Metadata(**response.get("metadata", {})),)
 
     except mailroom.MailroomException as e:
-        raise SearchException(e.response["error"])
+        raise SearchException.from_mailroom_exception(e)
 
 
 class SearchResults(NamedTuple):
     total: int
     query: str
-    fields: list
-    allow_as_group: bool
     contact_ids: list
+    metadata: Metadata = Metadata()
 
 
 def search_contacts(org_id, group_uuid, query, sort=None, offset=None):
@@ -725,15 +798,11 @@ def search_contacts(org_id, group_uuid, query, sort=None, offset=None):
         client = mailroom.get_client()
         response = client.contact_search(org_id, str(group_uuid), query, sort, offset=offset)
         return SearchResults(
-            response["total"],
-            response["query"],
-            response["fields"],
-            response.get("allow_as_group", False),
-            response["contact_ids"],
+            response["total"], response["query"], response["contact_ids"], Metadata(**response.get("metadata", {})),
         )
 
     except mailroom.MailroomException as e:
-        raise SearchException(e.response["error"])
+        raise SearchException.from_mailroom_exception(e)
 
 
 def legacy_parse_query(text, optimize=True, as_anon=False):  # pragma: no cover

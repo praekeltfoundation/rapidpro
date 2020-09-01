@@ -57,6 +57,7 @@
           %form{action:'{% ssl_brand_url "public.lead_create" %}', method:'POST'}
             -csrf_token
 
+<<<<<<< HEAD
             %fieldset
               .control-group
                 .controls
@@ -68,6 +69,17 @@
             %p.text-error {{error_msg}}
       -else
         #spacer
+=======
+          %fieldset
+            .control-group
+              .controls
+                %nobr
+                  %input.controls{'type':"text", 'name':"email", 'placeholder':"Enter your email.."}
+                  %button.btn.btn-success{type:"submit"}
+                    -trans "Sign Up"
+        -if errors
+          %p.text-error {{error_msg}}
+>>>>>>> upstream/master
 
     -if not thanks
       %br.clearfix{clear:"both"}
