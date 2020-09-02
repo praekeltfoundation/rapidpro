@@ -18,13 +18,13 @@ class PublicTest(TembaTest):
         self.assertEqual(response.request["PATH_INFO"], "/")
 
         # check signup form displayed by default
-        self.assertContains(self.client.get(home_url), "Create Account")
+        self.assertContains(self.client.get(home_url), "Sign Up")
 
         # check signup form not displayed if signups unavailable
         branding = copy.deepcopy(settings.BRANDING)
         branding["rapidpro.io"]["allow_signups"] = False
         with self.settings(BRANDING=branding):
-            self.assertNotContains(self.client.get(home_url), "Create Account")
+            self.assertNotContains(self.client.get(home_url), "Sign Up")
 
         response = self.client.get(home_url + "?errors=&foo", follow=True)
         self.assertEqual(response.request["PATH_INFO"], "/")
