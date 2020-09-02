@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta
 from unittest.mock import PropertyMock, patch
-from uuid import uuid4
 
 import pytz
 from openpyxl import load_workbook
@@ -44,6 +43,7 @@ from temba.tests import AnonymousOrg, TembaTest
 from temba.tests.engine import MockSessionWriter
 from temba.tests.s3 import MockS3Client
 from temba.utils import json
+from temba.utils.uuid import uuid4
 
 from .tasks import retry_errored_messages, squash_msgcounts
 from .templatetags.sms import as_icon
@@ -358,7 +358,7 @@ class MsgTest(TembaTest):
 
         (msg1,) = tuple(Msg.objects.filter(broadcast=broadcast1))
 
-        with self.assertNumQueries(45):
+        with self.assertNumQueries(46):
             response = self.client.get(reverse("msgs.msg_outbox"))
 
         self.assertContains(response, "Outbox (1)")
@@ -382,7 +382,7 @@ class MsgTest(TembaTest):
         broadcast4.schedule = Schedule.create_schedule(self.org, self.admin, timezone.now(), Schedule.REPEAT_DAILY)
         broadcast4.save(update_fields=["schedule"])
 
-        with self.assertNumQueries(42):
+        with self.assertNumQueries(43):
             response = self.client.get(reverse("msgs.msg_outbox"))
 
         self.assertContains(response, "Outbox (5)")
@@ -432,7 +432,7 @@ class MsgTest(TembaTest):
         self.assertEqual(302, response.status_code)
 
         # visit inbox page as a manager of the organization
-        with self.assertNumQueries(62):
+        with self.assertNumQueries(63):
             response = self.fetch_protected(inbox_url + "?refresh=10000", self.admin)
 
         # make sure that we embed refresh script if View.refresh is set
@@ -442,13 +442,13 @@ class MsgTest(TembaTest):
         self.assertEqual(response.context["object_list"].count(), 5)
         self.assertEqual(response.context["folders"][0]["url"], "/msg/inbox/")
         self.assertEqual(response.context["folders"][0]["count"], 5)
-        self.assertEqual(response.context["actions"], ["archive", "label"])
+        self.assertEqual(response.context["actions"], ("archive", "label"))
 
         # visit inbox page as administrator
         response = self.fetch_protected(inbox_url, self.admin)
 
         self.assertEqual(response.context["object_list"].count(), 5)
-        self.assertEqual(response.context["actions"], ["archive", "label"])
+        self.assertEqual(response.context["actions"], ("archive", "label"))
 
         # let's add some labels
         folder = Label.get_or_create_folder(self.org, self.user, "folder")
@@ -516,11 +516,11 @@ class MsgTest(TembaTest):
         self.assertEqual(302, response.status_code)
 
         # visit archived page as a manager of the organization
-        with self.assertNumQueries(54):
+        with self.assertNumQueries(55):
             response = self.fetch_protected(archive_url, self.admin)
 
         self.assertEqual(response.context["object_list"].count(), 1)
-        self.assertEqual(response.context["actions"], ["restore", "label", "delete"])
+        self.assertEqual(response.context["actions"], ("restore", "label", "delete"))
 
         # check that the inbox does not contains archived messages
 
@@ -533,11 +533,11 @@ class MsgTest(TembaTest):
         response = self.fetch_protected(inbox_url, self.admin)
 
         self.assertEqual(response.context["object_list"].count(), 4)
-        self.assertEqual(response.context["actions"], ["archive", "label"])
+        self.assertEqual(response.context["actions"], ("archive", "label"))
 
         # test restoring an archived message back to inbox
         post_data = dict(action="restore", objects=[msg1.pk])
-        self.client.post(inbox_url, post_data, follow=True)
+        self.client.post(archive_url, post_data, follow=True)
         self.assertEqual(Msg.objects.filter(visibility=Msg.VISIBILITY_ARCHIVED).count(), 0)
 
         response = self.client.get(inbox_url)
@@ -598,11 +598,11 @@ class MsgTest(TembaTest):
         # org viewer can
         self.login(self.admin)
 
-        with self.assertNumQueries(42):
+        with self.assertNumQueries(43):
             response = self.client.get(url)
 
         self.assertEqual(set(response.context["object_list"]), {msg3, msg2, msg1})
-        self.assertEqual(response.context["actions"], ["label"])
+        self.assertEqual(response.context["actions"], ("label",))
 
     def test_retry_errored(self):
         # change our default channel to external
@@ -663,11 +663,11 @@ class MsgTest(TembaTest):
         self.assertEqual(302, response.status_code)
 
         # visit failed page as an administrator
-        with self.assertNumQueries(65):
+        with self.assertNumQueries(66):
             response = self.fetch_protected(failed_url, self.admin)
 
         self.assertEqual(response.context["object_list"].count(), 3)
-        self.assertEqual(response.context["actions"], ["resend"])
+        self.assertEqual(response.context["actions"], ("resend",))
         self.assertContains(response, "Export")
 
         self.assertContains(response, reverse("channels.channellog_read", args=[log.id]))
@@ -1709,6 +1709,10 @@ class MsgTest(TembaTest):
                 self.org.timezone,
             )
 
+        response = self.client.post(reverse("msgs.msg_export") + "?l=I&redirect=http://foo.me", {"export_all": 1})
+        self.assertEqual(302, response.status_code)
+        self.assertEqual("/msg/inbox/", response.url)
+
 
 class MsgCRUDLTest(TembaTest):
     def setUp(self):
@@ -1747,7 +1751,7 @@ class MsgCRUDLTest(TembaTest):
         self.login(self.user)
         response = self.client.get(reverse("msgs.msg_filter", args=[label3.uuid]))
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context["actions"], ["unlabel", "label"])
+        self.assertEqual(response.context["actions"], ("unlabel", "label"))
         self.assertNotContains(response, reverse("msgs.label_update", args=[label3.pk]))  # can't update label
         self.assertNotContains(response, reverse("msgs.label_delete", args=[label3.pk]))  # can't delete label
 
@@ -1757,7 +1761,7 @@ class MsgCRUDLTest(TembaTest):
         # check viewing a folder
         response = self.client.get(reverse("msgs.msg_filter", args=[folder.uuid]))
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context["actions"], ["unlabel", "label"])
+        self.assertEqual(response.context["actions"], ("unlabel", "label"))
         self.assertNotContains(response, reverse("msgs.label_update", args=[folder.pk]))  # can't update folder
         self.assertNotContains(response, reverse("msgs.label_delete", args=[folder.pk]))  # can't delete folder
 
@@ -2688,7 +2692,6 @@ class LabelCRUDLTest(TembaTest):
         Label.get_or_create(self.org, self.user, "Junk", folder=folder)
         Label.get_or_create(self.org, self.user, "Important")
 
-        self.setUpSecondaryOrg()
         Label.get_or_create(self.org2, self.admin2, "Other Org")
 
         # viewers can't edit flows so don't have access to this JSON endpoint as that's only place it's used

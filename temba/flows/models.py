@@ -2,10 +2,9 @@ import logging
 import time
 from array import array
 from collections import OrderedDict, defaultdict
-from datetime import date, timedelta
+from datetime import timedelta
 from enum import Enum
 from urllib.request import urlopen
-from uuid import uuid4
 
 import iso8601
 import regex
@@ -30,9 +29,10 @@ from temba.channels.models import Channel, ChannelConnection
 from temba.classifiers.models import Classifier
 from temba.contacts.models import URN, Contact, ContactField, ContactGroup
 from temba.globals.models import Global
-from temba.msgs.models import Label, Msg
+from temba.msgs.models import Attachment, Label, Msg
 from temba.orgs.models import Org
 from temba.templates.models import Template
+from temba.tickets.models import Ticketer
 from temba.utils import analytics, chunk_list, json, on_transaction_commit
 from temba.utils.dates import str_to_datetime
 from temba.utils.export import BaseExportAssetStore, BaseExportTask
@@ -45,6 +45,7 @@ from temba.utils.models import (
     generate_uuid,
 )
 from temba.utils.s3 import public_file_storage
+from temba.utils.uuid import uuid4
 from temba.values.constants import Value
 
 from . import legacy
@@ -129,17 +130,20 @@ class Flow(TembaModel):
     FLOW_TYPE = "flow_type"
     ID = "id"
 
-    # items in Flow.metadata
+    # items in metadata
     METADATA = "metadata"
-    METADATA_SAVED_ON = "saved_on"
-    METADATA_NAME = "name"
-    METADATA_REVISION = "revision"
-    METADATA_EXPIRES = "expires"
     METADATA_RESULTS = "results"
     METADATA_DEPENDENCIES = "dependencies"
     METADATA_WAITING_EXIT_UUIDS = "waiting_exit_uuids"
     METADATA_PARENT_REFS = "parent_refs"
     METADATA_ISSUES = "issues"
+    METADATA_IVR_RETRY = "ivr_retry"
+
+    # items in legacy metadata
+    METADATA_SAVED_ON = "saved_on"
+    METADATA_NAME = "name"
+    METADATA_REVISION = "revision"
+    METADATA_EXPIRES = "expires"
 
     # items in the response from mailroom flow inspection
     INSPECT_RESULTS = "results"
@@ -249,6 +253,8 @@ class Flow(TembaModel):
 
     template_dependencies = models.ManyToManyField(Template, related_name="dependent_flows")
 
+    ticketer_dependencies = models.ManyToManyField(Ticketer, related_name="dependent_flows")
+
     @classmethod
     def create(
         cls,
@@ -288,7 +294,7 @@ class Flow(TembaModel):
                 },
             )
 
-        analytics.track(user.username, "nyaruka.flow_created", dict(name=name))
+        analytics.track(user.username, "temba.flow_created", dict(name=name))
         return flow
 
     @classmethod
@@ -488,6 +494,17 @@ class Flow(TembaModel):
         return copy
 
     @classmethod
+    def export_translation(cls, org, flows, language, exclude_args):
+        flow_ids = [f.id for f in flows]
+        return mailroom.get_client().po_export(org.id, flow_ids, language=language, exclude_arguments=exclude_args)
+
+    @classmethod
+    def import_translation(cls, org, flows, language, po_data):
+        flow_ids = [f.id for f in flows]
+        response = mailroom.get_client().po_import(org.id, flow_ids, language=language, po_data=po_data)
+        return {d["uuid"]: d for d in response["flows"]}
+
+    @classmethod
     def get_unique_name(cls, org, base_name, ignore=None):
         """
         Generates a unique flow name based on the given base name
@@ -509,36 +526,33 @@ class Flow(TembaModel):
         return name
 
     @classmethod
-    def apply_action_label(cls, user, flows, label, add):  # pragma: needs cover
-        return label.toggle_label(flows, add)
+    def apply_action_label(cls, user, flows, label):
+        label.toggle_label(flows, add=True)
+
+    @classmethod
+    def apply_action_unlabel(cls, user, flows, label):
+        label.toggle_label(flows, add=False)
 
     @classmethod
     def apply_action_archive(cls, user, flows):
-        changed = []
-
         for flow in flows:
-
             # don't archive flows that belong to campaigns
             from temba.campaigns.models import CampaignEvent
 
-            if not CampaignEvent.objects.filter(
+            has_events = CampaignEvent.objects.filter(
                 is_active=True, flow=flow, campaign__org=user.get_org(), campaign__is_archived=False
-            ).exists():
-                flow.archive()
-                changed.append(flow.pk)
+            ).exists()
 
-        return changed
+            if not has_events:
+                flow.archive()
 
     @classmethod
     def apply_action_restore(cls, user, flows):
-        changed = []
         for flow in flows:
             try:
                 flow.restore()
-                changed.append(flow.pk)
             except FlowException:  # pragma: no cover
                 pass
-        return changed
 
     def as_select2(self):
         return dict(id=self.uuid, text=self.name)
@@ -683,7 +697,7 @@ class Flow(TembaModel):
 
         # save a new revision but we can't validate it just yet because we're in a transaction and mailroom
         # won't see any new database objects
-        self.save_revision(user, cloned_definition, validate=False)
+        self.save_revision(user, cloned_definition)
 
     def import_legacy_definition(self, flow_json, uuid_map):
         """
@@ -914,11 +928,12 @@ class Flow(TembaModel):
         """
 
         flow_start = FlowStart.objects.create(
+            org=self.org,
             flow=self,
+            start_type=FlowStart.TYPE_MANUAL,
             restart_participants=restart_participants,
             include_active=include_active,
             created_by=user,
-            modified_by=user,
             query=query,
         )
 
@@ -927,8 +942,7 @@ class Flow(TembaModel):
 
         group_ids = [g.id for g in groups]
         flow_start.groups.add(*group_ids)
-
-        on_transaction_commit(lambda: flow_start.async_start())
+        flow_start.async_start()
 
     def get_export_dependencies(self):
         """
@@ -1096,14 +1110,20 @@ class Flow(TembaModel):
         return metadata
 
     @classmethod
-    def get_metadata(cls, flow_info):
-        return {
+    def get_metadata(cls, flow_info, previous=None):
+        data = {
             Flow.METADATA_RESULTS: flow_info[Flow.INSPECT_RESULTS],
             Flow.METADATA_DEPENDENCIES: flow_info[Flow.INSPECT_DEPENDENCIES],
             Flow.METADATA_WAITING_EXIT_UUIDS: flow_info[Flow.INSPECT_WAITING_EXITS],
             Flow.METADATA_PARENT_REFS: flow_info[Flow.INSPECT_PARENT_REFS],
             Flow.METADATA_ISSUES: flow_info[Flow.INSPECT_ISSUES],
         }
+
+        # IVR retry is the only value in metadata that doesn't come from flow inspection
+        if previous and Flow.METADATA_IVR_RETRY in previous:
+            data[Flow.METADATA_IVR_RETRY] = previous[Flow.METADATA_IVR_RETRY]
+
+        return data
 
     @classmethod
     def detect_invalid_cycles(cls, json_dict):
@@ -1196,7 +1216,7 @@ class Flow(TembaModel):
             if self.is_legacy():
                 self.update(flow_def, user=get_flow_user(self.org))
             else:
-                self.save_revision(get_flow_user(self.org), flow_def, validate=False)
+                self.save_revision(get_flow_user(self.org), flow_def)
 
             self.refresh_from_db()
 
@@ -1222,7 +1242,7 @@ class Flow(TembaModel):
         """
         return self.revisions.order_by("revision").last()
 
-    def save_revision(self, user, definition, validate=True):
+    def save_revision(self, user, definition):
         """
         Saves a new revision for this flow, validation will be done on the definition first
         """
@@ -1254,7 +1274,7 @@ class Flow(TembaModel):
         with transaction.atomic():
             # update our flow fields
             self.base_language = definition.get(Flow.DEFINITION_LANGUAGE, None)
-            self.metadata = Flow.get_metadata(flow_info)
+            self.metadata = Flow.get_metadata(flow_info, self.metadata)
             self.saved_by = user
             self.saved_on = timezone.now()
             self.version_number = Flow.CURRENT_SPEC_VERSION
@@ -1633,6 +1653,7 @@ class Flow(TembaModel):
             "group": ContactGroup.user_groups.filter(org=self.org, is_active=True, uuid__in=identifiers["group"]),
             "label": Label.label_objects.filter(org=self.org, uuid__in=identifiers["label"]),
             "template": self.org.templates.filter(uuid__in=identifiers["template"]),
+            "ticketer": self.org.ticketers.filter(is_active=True, uuid__in=identifiers["ticketer"]),
         }
 
         # reset the m2m for each type
@@ -1670,6 +1691,7 @@ class Flow(TembaModel):
         self.channel_dependencies.clear()
         self.label_dependencies.clear()
         self.classifier_dependencies.clear()
+        self.ticketer_dependencies.clear()
 
         # queue mailroom to interrupt sessions where contact is currently in this flow
         mailroom.queue_interrupt(self.org, flow=self)
@@ -1979,6 +2001,7 @@ class FlowRun(RequireUpdateFieldsMixin, models.Model):
 
         return {
             "id": self.id,
+            "uuid": str(self.uuid),
             "flow": {"uuid": str(self.flow.uuid), "name": self.flow.name},
             "contact": {"uuid": str(self.contact.uuid), "name": self.contact.name},
             "responded": self.responded,
@@ -2777,6 +2800,7 @@ class ExportFlowResultsTask(BaseExportTask):
         columns.append("Started")
         columns.append("Modified")
         columns.append("Exited")
+        columns.append("Run UUID")
 
         for result_field in result_fields:
             field_name, flow_name = result_field["name"], result_field["flow_name"]
@@ -2800,7 +2824,7 @@ class ExportFlowResultsTask(BaseExportTask):
         sheet = book.add_sheet(name, index)
         book.num_msgs_sheets += 1
 
-        headers = ["Contact UUID", "URN", "Name", "Date", "Direction", "Message", "Channel"]
+        headers = ["Contact UUID", "URN", "Name", "Date", "Direction", "Message", "Attachments", "Channel"]
 
         self.append_row(sheet, headers)
         return sheet
@@ -2900,37 +2924,21 @@ class ExportFlowResultsTask(BaseExportTask):
             if earliest_created_on is None or flow.created_on < earliest_created_on:
                 earliest_created_on = flow.created_on
 
-        earliest_day = earliest_created_on.date()
-        earliest_month = date(earliest_day.year, earliest_day.month, 1)
-
-        archives = (
-            Archive.objects.filter(org=self.org, archive_type=Archive.TYPE_FLOWRUN, record_count__gt=0, rollup=None)
-            .filter(
-                Q(period=Archive.PERIOD_MONTHLY, start_date__gte=earliest_month)
-                | Q(period=Archive.PERIOD_DAILY, start_date__gte=earliest_day)
-            )
-            .order_by("start_date")
-        )
-
+        records = Archive.iter_all_records(self.org, Archive.TYPE_FLOWRUN, after=earliest_created_on)
         flow_uuids = {str(flow.uuid) for flow in flows}
-        last_modified_on = None
+        seen = set()
 
-        for archive in archives:
-            for record_batch in chunk_list(archive.iter_records(), 1000):
-                matching = []
-                for record in record_batch:
-                    modified_on = iso8601.parse_date(record["modified_on"])
-                    if last_modified_on is None or last_modified_on < modified_on:
-                        last_modified_on = modified_on
+        for record_batch in chunk_list(records, 1000):
+            matching = []
+            for record in record_batch:
+                if record["flow"]["uuid"] in flow_uuids and (not responded_only or record["responded"]):
+                    seen.add(record["id"])
+                    matching.append(record)
 
-                    if record["flow"]["uuid"] in flow_uuids and (not responded_only or record["responded"]):
-                        matching.append(record)
-                yield matching
+            yield matching
 
         # secondly get runs from database
         runs = FlowRun.objects.filter(flow__in=flows).order_by("modified_on")
-        if last_modified_on:
-            runs = runs.filter(modified_on__gt=last_modified_on)
         if responded_only:
             runs = runs.filter(responded=True)
         run_ids = array(str("l"), runs.values_list("id", flat=True))
@@ -2945,7 +2953,7 @@ class ExportFlowResultsTask(BaseExportTask):
             )
 
             # convert this batch of runs to same format as records in our archives
-            yield [run.as_archive_json() for run in run_batch]
+            yield [run.as_archive_json() for run in run_batch if run.id not in seen]
 
     def _write_runs(
         self,
@@ -3022,6 +3030,7 @@ class ExportFlowResultsTask(BaseExportTask):
                 iso8601.parse_date(run["created_on"]),
                 iso8601.parse_date(run["modified_on"]),
                 iso8601.parse_date(run["exited_on"]) if run["exited_on"] else None,
+                run["uuid"],
             ]
             runs_sheet_row += result_values
 
@@ -3047,6 +3056,7 @@ class ExportFlowResultsTask(BaseExportTask):
             msg_text = msg.get("text", "")
             msg_created_on = iso8601.parse_date(event["created_on"])
             msg_channel = msg.get("channel")
+            msg_attachments = [attachment.url for attachment in Attachment.parse_all(msg.get("attachments", []))]
 
             if "urn" in msg:
                 msg_urn = URN.format(msg["urn"], formatted=False)
@@ -3065,6 +3075,7 @@ class ExportFlowResultsTask(BaseExportTask):
                     msg_created_on,
                     msg_direction,
                     msg_text,
+                    ", ".join(msg_attachments),
                     msg_channel["name"] if msg_channel else "",
                 ],
             )
@@ -3086,17 +3097,37 @@ class FlowStart(models.Model):
     STATUS_FAILED = "F"
 
     STATUS_CHOICES = (
-        (STATUS_PENDING, "Pending"),
-        (STATUS_STARTING, "Starting"),
-        (STATUS_COMPLETE, "Complete"),
-        (STATUS_FAILED, "Failed"),
+        (STATUS_PENDING, _("Pending")),
+        (STATUS_STARTING, _("Starting")),
+        (STATUS_COMPLETE, _("Complete")),
+        (STATUS_FAILED, _("Failed")),
+    )
+
+    TYPE_MANUAL = "M"
+    TYPE_API = "A"
+    TYPE_API_ZAPIER = "Z"
+    TYPE_FLOW_ACTION = "F"
+    TYPE_TRIGGER = "T"
+
+    TYPE_CHOICES = (
+        (TYPE_MANUAL, "Manual"),
+        (TYPE_API, "API"),
+        (TYPE_API_ZAPIER, "Zapier"),
+        (TYPE_FLOW_ACTION, "Flow Action"),
+        (TYPE_TRIGGER, "Trigger"),
     )
 
     # the uuid of this start
     uuid = models.UUIDField(unique=True, default=uuid4)
 
+    # the org the flow belongs to
+    org = models.ForeignKey(Org, on_delete=models.PROTECT, related_name="flow_starts")
+
     # the flow that should be started
     flow = models.ForeignKey(Flow, on_delete=models.PROTECT, related_name="starts")
+
+    # the type of start
+    start_type = models.CharField(max_length=1, choices=TYPE_CHOICES)
 
     # the groups that should be considered for start in this flow
     groups = models.ManyToManyField(ContactGroup)
@@ -3127,24 +3158,24 @@ class FlowStart(models.Model):
     # any extra parameters that should be passed as trigger params for this flow start
     extra = JSONAsTextField(null=True, default=dict)
 
-    # the parent flow's summary if there is one
+    # the parent run's summary if there is one
     parent_summary = JSONField(null=True)
+
+    # the session history if there is some
+    session_history = JSONField(null=True)
 
     # who created this flow start
     created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, on_delete=models.PROTECT, related_name="%(app_label)s_%(class)s_creations"
+        settings.AUTH_USER_MODEL, null=True, on_delete=models.PROTECT, related_name="flow_starts"
     )
 
     # when this flow start was created
     created_on = models.DateTimeField(default=timezone.now, editable=False)
 
-    # deprecated fields
-    is_active = models.BooleanField(default=True, null=True)
+    # when this flow start was last modified
+    modified_on = models.DateTimeField(default=timezone.now, editable=False)
 
-    modified_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True)
-
-    modified_on = models.DateTimeField(default=timezone.now, editable=False, null=True)
-
+    # the number of de-duped contacts that might be started, depending on options above
     contact_count = models.IntegerField(default=0, null=True)
 
     @classmethod
@@ -3152,8 +3183,10 @@ class FlowStart(models.Model):
         cls,
         flow,
         user,
+        start_type=TYPE_MANUAL,
         groups=None,
         contacts=None,
+        query=None,
         restart_participants=True,
         extra=None,
         include_active=True,
@@ -3166,13 +3199,15 @@ class FlowStart(models.Model):
             groups = []
 
         start = FlowStart.objects.create(
+            org=flow.org,
             flow=flow,
+            start_type=start_type,
             restart_participants=restart_participants,
             include_active=include_active,
             campaign_event=campaign_event,
+            query=query,
             extra=extra,
             created_by=user,
-            created_on=timezone.now(),
         )
 
         for contact in contacts:
@@ -3184,7 +3219,7 @@ class FlowStart(models.Model):
         return start
 
     def async_start(self):
-        mailroom.queue_flow_start(self)
+        on_transaction_commit(lambda: mailroom.queue_flow_start(self))
 
     def release(self):
         with transaction.atomic():
@@ -3197,6 +3232,22 @@ class FlowStart(models.Model):
 
     def __str__(self):  # pragma: no cover
         return f"FlowStart[id={self.id}, flow={self.flow.uuid}]"
+
+    class Meta:
+        indexes = [
+            # used for the flow start log page
+            models.Index(
+                name="flows_flowstarts_org_created",
+                fields=["org", "-created_on"],
+                condition=Q(created_by__isnull=False),
+            ),
+            # used by the flow_starts API endpoint
+            models.Index(
+                name="flows_flowstarts_org_modified",
+                fields=["org", "-modified_on"],
+                condition=Q(created_by__isnull=False),
+            ),
+        ]
 
 
 class FlowStartCount(SquashableModel):
@@ -3225,16 +3276,24 @@ class FlowStartCount(SquashableModel):
 
     @classmethod
     def get_count(cls, start):
-        count = FlowStartCount.objects.filter(start=start).aggregate(count_sum=Sum("count"))["count_sum"]
+        count = start.counts.aggregate(count_sum=Sum("count"))["count_sum"]
         return count if count else 0
 
     @classmethod
-    def populate_for_start(cls, start):
-        FlowStartCount.objects.filter(start=start).delete()
-        return FlowStartCount.objects.create(start=start, count=start.runs.count())
+    def bulk_annotate(cls, starts):
+        counts = (
+            cls.objects.filter(start_id__in=[s.id for s in starts])
+            .values("start_id")
+            .order_by("start_id")
+            .annotate(count=Sum("count"))
+        )
+        counts_by_start = {c["start_id"]: c["count"] for c in counts}
+
+        for start in starts:
+            start.run_count = counts_by_start.get(start.id, 0)
 
     def __str__(self):  # pragma: needs cover
-        return "FlowStartCount[%d:%d]" % (self.start_id, self.count)
+        return f"FlowStartCount[start={self.start_id}, count={self.count}]"
 
 
 class FlowLabel(models.Model):
