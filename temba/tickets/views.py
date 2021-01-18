@@ -2,19 +2,19 @@ from smartmin.views import SmartCRUDL, SmartDeleteView, SmartFormView, SmartList
 
 from django import forms
 from django.contrib import messages
-from django.http import HttpResponseRedirect
+from django.http import HttpResponse
 from django.urls import reverse
 from django.utils.functional import cached_property
 from django.utils.html import mark_safe
 from django.utils.translation import ugettext_lazy as _
 
 from temba.orgs.views import ModalMixin, OrgObjPermsMixin, OrgPermsMixin
-from temba.utils.views import BulkActionMixin
+from temba.utils.views import BulkActionMixin, ComponentFormMixin
 
 from .models import Ticket, Ticketer
 
 
-class BaseConnectView(OrgPermsMixin, SmartFormView):
+class BaseConnectView(ComponentFormMixin, OrgPermsMixin, SmartFormView):
     class Form(forms.Form):
         def __init__(self, **kwargs):
             self.request = kwargs.pop("request")
@@ -109,12 +109,22 @@ class TicketCRUDL(SmartCRUDL):
 
         def get_gear_links(self):
             links = []
+
             if self.has_org_perm("tickets.ticketer_delete"):
-                links.append(dict(title=_("Delete"), js_class="delete-ticketer", href="#"))
+                links.append(
+                    dict(
+                        id="ticketer-delete",
+                        title=_("Delete"),
+                        modax=_("Delete Ticket Service"),
+                        href=reverse("tickets.ticketer_delete", args=[self.ticketer.uuid]),
+                    )
+                )
+
             if self.has_org_perm("request_logs.httplog_ticketer"):
                 links.append(
                     dict(title=_("HTTP Log"), href=reverse("request_logs.httplog_ticketer", args=[self.ticketer.uuid]))
                 )
+
             return links
 
         def get_object_org(self):
@@ -140,7 +150,14 @@ class TicketerCRUDL(SmartCRUDL):
         cancel_url = "uuid@tickets.ticket_filter"
         title = _("Delete Ticketing Service")
         success_message = ""
+        submit_button_name = _("Delete")
         fields = ("uuid",)
+
+        def get_context_data(self, **kwargs):  # pragma: needs cover
+            context = super().get_context_data(**kwargs)
+            ticketer = self.get_object()
+            context["used_by_flows"] = ticketer.dependent_flows.all()[:5]
+            return context
 
         def get_success_url(self):
             return reverse("orgs.org_home")
@@ -150,10 +167,15 @@ class TicketerCRUDL(SmartCRUDL):
             service.release()
 
             messages.info(request, _("Your ticketing service has been deleted."))
-            return HttpResponseRedirect(self.get_success_url())
+            response = HttpResponse()
+            response["Temba-Success"] = self.get_success_url()
+            return response
 
     class Connect(OrgPermsMixin, SmartTemplateView):
+        def get_gear_links(self):
+            return [dict(title=_("Home"), style="button-light", href=reverse("orgs.org_home"),)]
+
         def get_context_data(self, **kwargs):
             context = super().get_context_data(**kwargs)
-            context["ticketer_types"] = [tt for tt in Ticketer.get_types() if tt.is_available()]
+            context["ticketer_types"] = [tt for tt in Ticketer.get_types() if tt.is_available_to(self.get_user())]
             return context

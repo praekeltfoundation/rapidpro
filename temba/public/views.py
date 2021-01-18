@@ -42,8 +42,8 @@ class WelcomeRedirect(RedirectView):
     url = "/welcome"
 
 
-class Deploy(SmartTemplateView):
-    template_name = "public/public_deploy.haml"
+class Style(SmartTemplateView):
+    template_name = "public/public_style.haml"
 
 
 class Android(SmartTemplateView):
